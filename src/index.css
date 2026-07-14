@@ -1,0 +1,33 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Playfair Display", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-sky-950: #2B4C7E;
+  --color-sky-900: #1E293B;
+  --color-sky-800: #223F6A;
+  --color-sky-700: #2B4C7E;
+  --color-sky-600: #1C3358;
+  --color-sky-500: #2B4C7E;
+  --color-sky-50: #F0F4F8;
+
+  --color-amber-500: #D4AF37;
+  --color-amber-600: #C5A059;
+  --color-amber-400: #E2C054;
+  --color-amber-50: #FAF6E8;
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #F9FAFB;
+  color: #2D3748;
+}
+
+/* Elegant additions for natural tones inputs and focus state borders */
+input:focus, textarea:focus, select:focus {
+  border-color: #2B4C7E !important;
+  box-shadow: 0 0 0 1px rgba(43, 76, 126, 0.1) !important;
+}

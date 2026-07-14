@@ -1,0 +1,8 @@
+{
+  "name": "Espaço La Belle Agenda",
+  "description": "Sistema completo e elegante para gestão, agendamento de serviços, controle de caixa, estoque e relatórios do salão Espaço La Belle.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

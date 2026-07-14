@@ -1,0 +1,100 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper: Check if user is signed in
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    // Helper: Check if user has admin role
+    function isAdmin() {
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    match /users/{userId} {
+      // Allow any signed-in user to read any profile (so they can see lists of users/professionals)
+      allow read: if isSignedIn();
+      
+      // Allow any signed-in user to create their own profile document
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      
+      // Allow any signed-in user to update their own profile, or an admin to update any profile
+      allow update: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin()
+      );
+      
+      // Allow any signed-in user to delete their own profile, or an admin to delete any profile
+      allow delete: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin()
+      );
+    }
+
+    match /backups/{backupId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /fcm_tokens/{tokenId} {
+      // Allow read/write if signed in and the token's owner userId matches request.auth.uid
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    match /push_notifications/{notificationId} {
+      // Allow read of notifications if recipient userId matches the signed-in user, or if admin
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || resource.data.userId == null || isAdmin());
+      // Allow creation/updates of notifications log for audit trail by signed-in staff/admins
+      allow write: if isSignedIn();
+    }
+
+    match /settings/{settingsId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /bookings/{bookingId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /cashier/{cashierId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /combos/{comboId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /clients/{clientId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /professionals/{professionalId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /services/{serviceId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /products/{productId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /packages/{packageId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /categories/{categoryId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /agenda_blocks/{blockId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /notifications/{notificationId} {
+      allow read, write: if isSignedIn();
+    }
+  }
+}

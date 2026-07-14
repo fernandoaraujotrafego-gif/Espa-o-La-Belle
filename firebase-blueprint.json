@@ -1,0 +1,137 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User account information and system permissions.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "The Firebase Authentication UID."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the user."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "Email address of the user."
+        },
+        "role": {
+          "type": "string",
+          "enum": ["admin", "gestora", "recepcao", "profissional"],
+          "description": "System access role."
+        },
+        "professionalId": {
+          "type": "string",
+          "description": "Linked professional ID if role is professional."
+        },
+        "isBlocked": {
+          "type": "boolean",
+          "description": "Whether the user's access has been disabled by an admin."
+        },
+        "permissions": {
+          "type": "object",
+          "description": "Role-specific custom permissions."
+        }
+      },
+      "required": ["id", "name", "email", "role", "isBlocked"]
+    },
+    "FCMToken": {
+      "title": "FCM Device Token",
+      "description": "FCM Registration token mapped to users for push notifications.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique record identifier."
+        },
+        "token": {
+          "type": "string",
+          "description": "The Firebase Cloud Messaging push token."
+        },
+        "userId": {
+          "type": "string",
+          "description": "User UID who owns this device."
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Email of the user."
+        },
+        "deviceType": {
+          "type": "string",
+          "description": "Type of device registered."
+        },
+        "createdAt": {
+          "type": "string",
+          "description": "The ISO timestamp when token was registered."
+        },
+        "updatedAt": {
+          "type": "string",
+          "description": "The ISO timestamp when token was last updated."
+        }
+      },
+      "required": ["id", "token", "userId", "userEmail", "deviceType", "createdAt"]
+    },
+    "PushNotification": {
+      "title": "Push Notification Ledger",
+      "description": "Audit trail of sent or scheduled push notifications and their status.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Notification unique ID."
+        },
+        "title": {
+          "type": "string",
+          "description": "The title of the notification."
+        },
+        "body": {
+          "type": "string",
+          "description": "The main message content."
+        },
+        "bookingId": {
+          "type": "string",
+          "description": "Linked booking reference if any."
+        },
+        "userId": {
+          "type": "string",
+          "description": "Recipient user ID if targeted."
+        },
+        "userEmail": {
+          "type": "string",
+          "description": "Recipient email if targeted."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["sent", "pending", "failed"],
+          "description": "The delivery status."
+        },
+        "error": {
+          "type": "string",
+          "description": "Error details if status is failed."
+        },
+        "sentAt": {
+          "type": "string",
+          "description": "ISO timestamp of the notification transmission."
+        }
+      },
+      "required": ["id", "title", "body", "status", "sentAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Stores user records and system roles indexed by Auth UID."
+    },
+    "/fcm_tokens/{tokenId}": {
+      "schema": "FCMToken",
+      "description": "Tracks devices and tokens registered for receiving Firebase Cloud Messaging push notifications."
+    },
+    "/push_notifications/{notificationId}": {
+      "schema": "PushNotification",
+      "description": "Holds the ledger/audit history of generated and dispatched push notifications."
+    }
+  }
+}

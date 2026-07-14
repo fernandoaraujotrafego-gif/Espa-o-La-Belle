@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sem Conexão – Espaço La Belle</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/icon-180x180.png">
+  <link rel="icon" type="image/png" href="/icons/icon-192x192.png">
+  <meta name="theme-color" content="#294f82">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Inter:wght@400;500;600;700&display=swap');
+
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: 'Inter', sans-serif;
+      background-color: #090d16;
+      color: #f1f5f9;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      box-sizing: border-box;
+      text-align: center;
+    }
+
+    .container {
+      max-width: 480px;
+      padding: 40px 24px;
+      margin: 16px;
+      background: rgba(15, 23, 42, 0.6);
+      border: 1px solid rgba(217, 119, 6, 0.15);
+      border-radius: 24px;
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+    }
+
+    .logo-container {
+      margin-bottom: 28px;
+      display: inline-flex;
+      justify-content: center;
+      align-items: center;
+      position: relative;
+    }
+
+    .logo-glow {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      background: radial-gradient(circle, rgba(217, 119, 6, 0.15) 0%, rgba(217, 119, 6, 0) 70%);
+      border-radius: 50%;
+      z-index: 0;
+    }
+
+    .logo-icon {
+      position: relative;
+      z-index: 1;
+      width: 80px;
+      height: 80px;
+      background-color: rgba(217, 119, 6, 0.08);
+      border: 1.5px solid rgba(217, 119, 6, 0.5);
+      border-radius: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .logo-icon svg {
+      width: 40px;
+      height: 40px;
+      color: #fbbf24;
+    }
+
+    h1 {
+      font-family: 'Cinzel', serif;
+      font-size: 20px;
+      color: #fef08a;
+      letter-spacing: 2px;
+      margin: 0 0 8px 0;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+
+    h2 {
+      font-size: 15px;
+      color: #94a3b8;
+      font-weight: 500;
+      margin: 0 0 20px 0;
+      letter-spacing: 0.5px;
+    }
+
+    .offline-card {
+      background-color: rgba(245, 158, 11, 0.05);
+      border: 1.5px dashed rgba(245, 158, 11, 0.2);
+      border-radius: 16px;
+      padding: 18px 20px;
+      margin-bottom: 28px;
+    }
+
+    .offline-title {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      color: #f59e0b;
+      font-weight: 700;
+      font-size: 13px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 8px;
+    }
+
+    .offline-desc {
+      font-size: 12px;
+      color: #cbd5e1;
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    .status-alert {
+      font-size: 11px;
+      color: #94a3b8;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+
+    .btn-retry {
+      background: linear-gradient(135deg, #1e3a8a 0%, #294f82 100%);
+      color: #ffffff;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      padding: 12px 32px;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 14px;
+      cursor: pointer;
+      box-shadow: 0 4px 12px rgba(30, 58, 138, 0.3);
+      transition: all 0.2s ease-in-out;
+      text-transform: uppercase;
+      letter-spacing: 0.8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .btn-retry:hover {
+      background: linear-gradient(135deg, #2563eb 0%, #3b82f6 100%);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(37, 99, 235, 0.4);
+    }
+
+    .btn-retry:active {
+      transform: translateY(0);
+    }
+
+    .footer {
+      font-size: 10px;
+      color: #64748b;
+      margin-top: 32px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      padding-top: 16px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="logo-container">
+      <div class="logo-glow"></div>
+      <div class="logo-icon">
+        <!-- SVG Wi-Fi Off styled with luxury touch -->
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="1" y1="1" x2="23" y2="23"></line>
+          <path d="M16.72 11.06A10.94 10.94 0 0 1 19 12.5"></path>
+          <path d="M5 12.5a10.94 10.94 0 0 1 5.17-2.39"></path>
+          <path d="M10.71 5.05A16 16 0 0 1 22.58 9"></path>
+          <path d="M1.42 9a15.91 15.91 0 0 1 4.7-2.88"></path>
+          <path d="M8.53 16.11a6 6 0 0 1 6.95 0"></path>
+          <line x1="12" y1="20" x2="12.01" y2="20"></line>
+        </svg>
+      </div>
+    </div>
+
+    <h1>Espaço La Belle</h1>
+    <h2>Gestão de Agenda & Salão</h2>
+
+    <div class="offline-card">
+      <div class="offline-title">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path>
+          <line x1="12" y1="9" x2="12" y2="13"></line>
+          <line x1="12" y1="17" x2="12.01" y2="17"></line>
+        </svg>
+        Sem Conexão com a Internet
+      </div>
+      <p class="offline-desc">
+        Você está offline no momento. O aplicativo requer acesso ativo à internet para carregar agendamentos em tempo real, gerenciar o caixa e processar transações de forma 100% segura.
+      </p>
+    </div>
+
+    <p class="status-alert">
+      As operações do banco de dados e do caixa operacional foram bloqueadas temporariamente para garantir que nenhum dado seja corrompido ou sobrescrito.
+    </p>
+
+    <button class="btn-retry" onclick="window.location.reload()">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation: spin 8s linear infinite;">
+        <path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.72 2.78L21 8"></path>
+        <polyline points="21 3 21 8 16 8"></polyline>
+      </svg>
+      Tentar Reconectar
+    </button>
+
+    <div class="footer">
+      Espaço La Belle &copy; 2026 &bull; Aplicativo PWA Seguro
+    </div>
+  </div>
+
+  <script>
+    // Automatically reload when connection is detected
+    window.addEventListener('online', function() {
+      window.location.reload();
+    });
+  </script>
+</body>
+</html>
