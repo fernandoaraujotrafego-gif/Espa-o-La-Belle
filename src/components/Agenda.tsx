@@ -446,9 +446,9 @@ export default function Agenda() {
   
   // Bottom navigation booking trigger effect
   useEffect(() => {
-    const shouldOpen = localStorage.getItem('open_new_booking');
+    const shouldOpen = sessionStorage.getItem('open_new_booking');
     if (shouldOpen === 'true') {
-      localStorage.removeItem('open_new_booking');
+      sessionStorage.removeItem('open_new_booking');
       setIsNewBookingOpen(true);
     }
   }, [isNewBookingOpen]);
@@ -798,7 +798,7 @@ export default function Agenda() {
     setSelectedDate(d.toISOString().split('T')[0]);
   };
 
-  const handleCreateBlock = (e: React.FormEvent) => {
+  const handleCreateBlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setBlockError('');
 
@@ -810,7 +810,7 @@ export default function Agenda() {
     const reasonText = blockReason === 'Outro' ? (blockCustomReason || 'Bloqueio') : blockReason;
 
     if (blockProfId === 'all') {
-      activeProfessionals.forEach(p => {
+      await Promise.all(activeProfessionals.map(p =>
         addAgendaBlock({
           professionalId: p.id,
           professionalName: p.name,
@@ -818,12 +818,12 @@ export default function Agenda() {
           time: blockStartTime,
           endTime: blockEndTime,
           reason: reasonText
-        });
-      });
+        })
+      ));
     } else {
       const selectedProf = activeProfessionals.find(p => p.id === blockProfId);
       if (!selectedProf) return;
-      addAgendaBlock({
+      await addAgendaBlock({
         professionalId: selectedProf.id,
         professionalName: selectedProf.name,
         date: blockDate,
@@ -839,7 +839,7 @@ export default function Agenda() {
   };
 
   // Submit Booking creation
-  const handleCreateBooking = (e?: React.FormEvent, ignoreConflictOverride: boolean = false) => {
+  const handleCreateBooking = async (e?: React.FormEvent, ignoreConflictOverride: boolean = false) => {
     if (e) {
       e.preventDefault();
     }
@@ -940,7 +940,7 @@ export default function Agenda() {
       const srv = services.find(s => s.id === item.serviceId)!;
       const prof = professionals.find(p => p.id === item.professionalId)!;
 
-      const res = addBooking({
+      const res = await addBooking({
         clientId: finalClientId,
         clientName: finalClientName,
         clientPhone: finalClientPhone,
@@ -980,8 +980,8 @@ export default function Agenda() {
     setConflictsList([]);
   };
 
-  const handleUpdateStatus = (id: string, status: BookingStatus) => {
-    const res = updateBooking(id, { status });
+  const handleUpdateStatus = async (id: string, status: BookingStatus) => {
+    const res = await updateBooking(id, { status });
     if (res.success) {
       setSelectedBooking(prev => prev ? { ...prev, status } : null);
     }

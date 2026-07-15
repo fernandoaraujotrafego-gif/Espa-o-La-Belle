@@ -19,7 +19,7 @@ import Reports from './components/Reports';
 import Configuracoes from './components/Configuracoes';
 
 function MainApp() {
-  const { currentUser, authLoading } = useApp();
+  const { currentUser, authLoading, logout } = useApp();
   const [currentTab, setCurrentTab] = useState('dashboard');
 
   // Adjust default tab starting route on authentication changes
@@ -65,10 +65,7 @@ function MainApp() {
             </p>
           </div>
           <button
-            onClick={() => {
-              localStorage.removeItem('belle_current_user');
-              window.location.reload();
-            }}
+            onClick={() => void logout()}
             className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl cursor-pointer transition-colors"
           >
             Sair ou Trocar Usuário
