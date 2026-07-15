@@ -9,23 +9,18 @@ import {
   ServicePackage, ServicePackageItem, ServiceCombo, SalonSettings, Cashier, CashierTransaction, BookingStatus, AgendaBlock, AppNotification, BackupMetadata,
   FCMToken, PushNotificationLedger
 } from '../types';
-import {
-  MOCK_USERS, INITIAL_SERVICES, INITIAL_PROFESSIONALS, INITIAL_CLIENTS,
-  INITIAL_BOOKINGS, INITIAL_PRODUCTS, INITIAL_PACKAGES, INITIAL_COMBOS, DEFAULT_SETTINGS, INITIAL_NOTIFICATIONS
-} from '../data/mockData';
+import { DEFAULT_SETTINGS } from '../data/mockData';
 import { 
   app,
   auth, 
   db, 
-  bootstrapInitialUsers, 
   createNewUserAuth 
 } from '../lib/firebase';
 import { 
   signInWithEmailAndPassword, 
   signOut, 
   onAuthStateChanged, 
-  sendPasswordResetEmail,
-  createUserWithEmailAndPassword
+  sendPasswordResetEmail
 } from 'firebase/auth';
 import { 
   doc, 
@@ -36,7 +31,12 @@ import {
   collection, 
   onSnapshot,
   getDocs,
-  query
+  query,
+  writeBatch,
+  where,
+  getDocsFromServer,
+  getDocFromServer,
+  runTransaction
 } from 'firebase/firestore';
 import {
   getStorage,
@@ -53,6 +53,20 @@ export enum OperationType {
   LIST = 'list',
   GET = 'get',
   WRITE = 'write',
+}
+
+interface ScheduleReservation {
+  id: string;
+  start: number;
+  end: number;
+  kind: 'booking' | 'block';
+}
+
+interface BookingSchedule {
+  professionalId: string;
+  date: string;
+  reservations: ScheduleReservation[];
+  updatedAt: string;
 }
 
 export interface FirestoreErrorInfo {
@@ -108,13 +122,13 @@ interface AppContextType {
   categories: ServiceCategory[];
   settings: SalonSettings;
   cashier: Cashier;
-  login: (email: string, passwordOrRole: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
   logout: () => Promise<void>;
   forgotPassword: (email: string) => Promise<void>;
   
   // Agenda Blocks CRUD
-  addAgendaBlock: (block: Omit<AgendaBlock, 'id'>) => void;
-  deleteAgendaBlock: (id: string) => void;
+  addAgendaBlock: (block: Omit<AgendaBlock, 'id'>) => Promise<void>;
+  deleteAgendaBlock: (id: string) => Promise<void>;
 
   // Professionals CRUD
   addProfessional: (prof: Omit<Professional, 'id'>) => void;
@@ -138,9 +152,9 @@ interface AppContextType {
   searchClients: (query: string) => Client[];
 
   // Bookings CRUD & Helpers
-  addBooking: (bk: Omit<Booking, 'id' | 'endTime'>, ignoreConflict?: boolean) => { success: boolean; message: string; booking?: Booking; isConflict?: boolean };
-  updateBooking: (id: string, bk: Partial<Booking>) => { success: boolean; message: string };
-  deleteBooking: (id: string) => void;
+  addBooking: (bk: Omit<Booking, 'id' | 'endTime'>, ignoreConflict?: boolean) => Promise<{ success: boolean; message: string; booking?: Booking; isConflict?: boolean }>;
+  updateBooking: (id: string, bk: Partial<Booking>) => Promise<{ success: boolean; message: string }>;
+  deleteBooking: (id: string) => Promise<void>;
   updateBookingStatus: (id: string, status: BookingStatus) => void;
   checkScheduleConflict: (date: string, time: string, duration: number, professionalId: string, excludeBookingId?: string) => boolean;
   checkoutBooking: (
@@ -183,7 +197,7 @@ interface AppContextType {
 
   // Users CRUD
   users: User[];
-  addUser: (user: Omit<User, 'id'>, password?: string) => Promise<void>;
+  addUser: (user: Omit<User, 'id'>, password: string) => Promise<void>;
   updateUser: (id: string, user: Partial<User>) => Promise<void>;
   deleteUser: (id: string) => Promise<void>;
 
@@ -318,243 +332,47 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [users, setUsers] = useState<User[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [firebaseAuthDisabled, setFirebaseAuthDisabled] = useState(false);
+  const [firebaseAuthDisabled] = useState(false);
 
-  // Helper to ensure a user has a Firestore profile doc.
-  // Especially useful for default seed users who have Auth accounts but might not have Firestore docs yet.
-  const ensureUserProfile = async (uid: string, email: string | null): Promise<User | null> => {
+  // Login only reads profiles. Registration is exclusively handled by user management.
+  const getUserProfile = async (uid: string): Promise<User | null> => {
     try {
       const userDocRef = doc(db, 'users', uid);
-      let userDoc = await getDoc(userDocRef);
-
-      if (!userDoc.exists() && email) {
-        const lowerEmail = email.toLowerCase();
-        let defaultRole: string | null = null;
-        let defaultName = '';
-        let professionalId: string | undefined = undefined;
-
-        if (lowerEmail === 'admin@labelle.com' || lowerEmail === 'fernandoaraujotrafego@gmail.com') {
-          defaultRole = 'admin';
-          defaultName = lowerEmail === 'admin@labelle.com' ? 'Juliana Medeiros (Admin)' : 'Fernando Araújo (Admin)';
-        } else if (lowerEmail === 'gestora@labelle.com') {
-          defaultRole = 'gestora';
-          defaultName = 'Patrícia Rocha (Gestora)';
-        } else if (lowerEmail === 'recepcao@labelle.com') {
-          defaultRole = 'recepcao';
-          defaultName = 'Bruna Dias (Recepção)';
-        } else if (lowerEmail === 'profissional@labelle.com') {
-          defaultRole = 'profissional';
-          defaultName = 'Camila Silva (Nails Designer)';
-          professionalId = 'prof-1';
-        } else {
-          // Robust fallback for other/custom email accounts during testing
-          defaultRole = 'admin';
-          defaultName = `Usuário (${email.split('@')[0]})`;
-        }
-
-        if (defaultRole) {
-          const defaultPayload: any = {
-            id: uid,
-            name: defaultName,
-            email: email,
-            role: defaultRole,
-            isBlocked: false,
-          };
-          if (professionalId) {
-            defaultPayload.professionalId = professionalId;
-          }
-          await setDoc(userDocRef, defaultPayload);
-          userDoc = await getDoc(userDocRef); // Re-fetch
-        }
-      }
+      const userDoc = await getDoc(userDocRef);
 
       if (userDoc.exists()) {
         return { ...userDoc.data(), id: uid } as User;
       }
     } catch (err) {
-      console.error('Erro ao verificar/criar perfil de usuário:', err);
+      console.error('Erro ao buscar perfil de usuário:', err);
     }
     return null;
   };
 
-  const [professionals, setProfessionals] = useState<Professional[]>(() => {
-    const saved = localStorage.getItem('belle_professionals');
-    return saved ? JSON.parse(saved) : INITIAL_PROFESSIONALS;
+  const [professionals, setProfessionals] = useState<Professional[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [packages, setPackages] = useState<ServicePackage[]>([]);
+  const [combos, setCombos] = useState<ServiceCombo[]>([]);
+  const [categories, setCategories] = useState<ServiceCategory[]>([]);
+  const [agendaBlocks, setAgendaBlocks] = useState<AgendaBlock[]>([]);
+  const [settings, setSettings] = useState<SalonSettings>(DEFAULT_SETTINGS);
+  const [cashier, setCashier] = useState<Cashier>({
+    isOpen: false,
+    initialValue: 0,
+    transactions: []
   });
-
-  const [services, setServices] = useState<Service[]>(() => {
-    const saved = localStorage.getItem('belle_services');
-    return saved ? JSON.parse(saved) : INITIAL_SERVICES;
-  });
-
-  const [clients, setClients] = useState<Client[]>(() => {
-    const saved = localStorage.getItem('belle_clients');
-    const rawClients = saved ? JSON.parse(saved) : INITIAL_CLIENTS;
-    return rawClients.map((c: Client) => ({
-      ...c,
-      birthDate: shiftBirthDate(c.birthDate),
-      lastVisit: shiftDate(c.lastVisit)
-    }));
-  });
-
-  const [bookings, setBookings] = useState<Booking[]>(() => {
-    const saved = localStorage.getItem('belle_bookings');
-    const rawBookings = saved ? JSON.parse(saved) : INITIAL_BOOKINGS;
-    const seen = new Set<string>();
-    const uniqueBookings = rawBookings.filter((b: Booking) => {
-      if (!b || !b.id) return false;
-      if (seen.has(b.id)) return false;
-      seen.add(b.id);
-      return true;
-    });
-    return uniqueBookings.map((b: Booking) => ({
-      ...b,
-      date: shiftDate(b.date)
-    }));
-  });
-
-  const [products, setProducts] = useState<Product[]>(() => {
-    const saved = localStorage.getItem('belle_products');
-    return saved ? JSON.parse(saved) : INITIAL_PRODUCTS;
-  });
-
-  const [packages, setPackages] = useState<ServicePackage[]>(() => {
-    const saved = localStorage.getItem('belle_packages');
-    return saved ? JSON.parse(saved) : INITIAL_PACKAGES;
-  });
-
-  const [combos, setCombos] = useState<ServiceCombo[]>(() => {
-    const saved = localStorage.getItem('belle_combos');
-    return saved ? JSON.parse(saved) : INITIAL_COMBOS;
-  });
-
-  const [categories, setCategories] = useState<ServiceCategory[]>(() => {
-    const saved = localStorage.getItem('belle_categories');
-    if (saved) return JSON.parse(saved);
-    // Initialize default categories based on the current mock data categories & professionals linked to those services
-    const cats: ServiceCategory[] = [
-      { id: 'cat-1', name: 'Manicure e Pedicure', professionals: ['prof-1', 'prof-3'] },
-      { id: 'cat-2', name: 'Alongamento de Unhas', professionals: ['prof-1'] },
-      { id: 'cat-3', name: 'Banho de Gel', professionals: ['prof-1'] },
-      { id: 'cat-4', name: 'Cílios', professionals: ['prof-2'] },
-      { id: 'cat-5', name: 'Sobrancelhas', professionals: ['prof-2', 'prof-3'] },
-      { id: 'cat-6', name: 'Cabeleireiro', professionals: ['prof-3'] },
-      { id: 'cat-7', name: 'Depilação', professionals: ['prof-2'] },
-      { id: 'cat-8', name: 'Estética Facial', professionals: ['prof-2'] }
-    ];
-    return cats;
-  });
-
-  const [agendaBlocks, setAgendaBlocks] = useState<AgendaBlock[]>(() => {
-    const saved = localStorage.getItem('belle_agenda_blocks');
-    const rawBlocks = saved ? JSON.parse(saved) : [
-      {
-        id: 'block-1',
-        professionalId: 'prof-2',
-        professionalName: 'Amanda Costa',
-        date: '2026-07-07',
-        time: '12:00',
-        endTime: '13:00',
-        reason: 'Almoço'
-      },
-      {
-        id: 'block-2',
-        professionalId: 'prof-3',
-        professionalName: 'Beatriz Reis',
-        date: '2026-07-07',
-        time: '08:30',
-        endTime: '11:00',
-        reason: 'Não vem de manhã'
-      }
-    ];
-    return rawBlocks.map((ab: AgendaBlock) => ({
-      ...ab,
-      date: shiftDate(ab.date)
-    }));
-  });
-
-  const [settings, setSettings] = useState<SalonSettings>(() => {
-    const saved = localStorage.getItem('belle_settings');
-    return saved ? JSON.parse(saved) : DEFAULT_SETTINGS;
-  });
-
-  const [cashier, setCashier] = useState<Cashier>(() => {
-    const saved = localStorage.getItem('belle_cashier');
-    let rawCashier;
-    if (saved) {
-      try {
-        rawCashier = JSON.parse(saved);
-      } catch (e) {
-        // Fallback
-      }
-    }
-    if (!rawCashier) {
-      const initialTransactions: CashierTransaction[] = [
-        {
-          id: 'tx-1',
-          type: 'entrada',
-          description: 'Venda de procedimento: Banho de Gel (Mariana Souza)',
-          value: 80.00,
-          category: 'Serviço',
-          date: '2026-07-07 10:15',
-          paymentMethod: 'Pix',
-          isCheckout: true
-        }
-      ];
-      rawCashier = {
-        isOpen: true,
-        openedAt: '2026-07-07 08:00',
-        initialValue: 150.00,
-        transactions: initialTransactions,
-        obs: 'Caixa de abertura padrão'
-      };
-    }
-    
-    if (rawCashier) {
-      if (rawCashier.openedAt) {
-        rawCashier.openedAt = shiftDate(rawCashier.openedAt);
-      }
-      if (rawCashier.closedAt) {
-        rawCashier.closedAt = shiftDate(rawCashier.closedAt);
-      }
-      if (Array.isArray(rawCashier.transactions)) {
-        const seen = new Set<string>();
-        rawCashier.transactions = rawCashier.transactions.map((t: any, index: number) => {
-          let txId = t.id;
-          if (!txId || seen.has(txId)) {
-            txId = `${txId || 'tx'}-${Date.now()}-${index}-${Math.floor(Math.random() * 1000000)}`;
-          }
-          seen.add(txId);
-          return {
-            ...t,
-            id: txId,
-            date: shiftDate(t.date)
-          };
-        });
-      }
-    }
-    return rawCashier;
-  });
-
-  const [notifications, setNotifications] = useState<AppNotification[]>(() => {
-    const saved = localStorage.getItem('belle_notifications');
-    return saved ? JSON.parse(saved) : INITIAL_NOTIFICATIONS;
-  });
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
 
   // Firebase Auth and Firestore Users Synchronization
   useEffect(() => {
-    // Run bootstrap once to ensure default Auth accounts are populated
-    bootstrapInitialUsers().then((isDisabled) => {
-      if (isDisabled) {
-        setFirebaseAuthDisabled(true);
-      }
-    });
-
     // Listen to Firebase Auth state
     const unsubscribeAuth = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
-          const userData = await ensureUserProfile(firebaseUser.uid, firebaseUser.email);
+          const userData = await getUserProfile(firebaseUser.uid);
 
           if (userData) {
             if (userData.isBlocked) {
@@ -635,314 +453,136 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // Listeners for real-time synchronization with Firestore
   useEffect(() => {
-    if (!currentUser) return;
+    if (!currentUser) {
+      setProfessionals([]);
+      setServices([]);
+      setClients([]);
+      setBookings([]);
+      setProducts([]);
+      setPackages([]);
+      setCombos([]);
+      setCategories([]);
+      setAgendaBlocks([]);
+      setSettings(DEFAULT_SETTINGS);
+      setCashier({ isOpen: false, initialValue: 0, transactions: [] });
+      setNotifications([]);
+      return;
+    }
 
     // 1. Professionals
-    const unsubProfessionals = onSnapshot(collection(db, 'professionals'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial professionals...');
-        for (const p of INITIAL_PROFESSIONALS) {
-          try {
-            await setDoc(doc(db, 'professionals', p.id), p);
-          } catch (err) {
-            console.error('Error seeding professional:', p.id, err);
-          }
-        }
-      } else {
-        const list: Professional[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as Professional);
-        });
-        setProfessionals(list);
-      }
+    const unsubProfessionals = onSnapshot(collection(db, 'professionals'), (snapshot) => {
+      setProfessionals(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as Professional)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'professionals');
     });
 
     // 2. Services
-    const unsubServices = onSnapshot(collection(db, 'services'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial services...');
-        for (const s of INITIAL_SERVICES) {
-          try {
-            await setDoc(doc(db, 'services', s.id), s);
-          } catch (err) {
-            console.error('Error seeding service:', s.id, err);
-          }
-        }
-      } else {
-        const list: Service[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as Service);
-        });
-        setServices(list);
-      }
+    const unsubServices = onSnapshot(collection(db, 'services'), (snapshot) => {
+      setServices(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as Service)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'services');
     });
 
     // 3. Clients
-    const unsubClients = onSnapshot(collection(db, 'clients'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial clients...');
-        for (const c of INITIAL_CLIENTS) {
-          try {
-            const shiftedC = {
-              ...c,
-              birthDate: shiftBirthDate(c.birthDate),
-              lastVisit: shiftDate(c.lastVisit)
-            };
-            await setDoc(doc(db, 'clients', c.id), shiftedC);
-          } catch (err) {
-            console.error('Error seeding client:', c.id, err);
-          }
-        }
-      } else {
-        const list: Client[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as Client);
-        });
-        setClients(list);
-      }
+    const unsubClients = onSnapshot(collection(db, 'clients'), (snapshot) => {
+      setClients(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as Client)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'clients');
     });
 
     // 4. Bookings
-    const unsubBookings = onSnapshot(collection(db, 'bookings'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial bookings...');
-        for (const b of INITIAL_BOOKINGS) {
-          try {
-            const shiftedB = {
-              ...b,
-              date: shiftDate(b.date)
-            };
-            await setDoc(doc(db, 'bookings', b.id), shiftedB);
-          } catch (err) {
-            console.error('Error seeding booking:', b.id, err);
-          }
-        }
-      } else {
-        const list: Booking[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as Booking);
-        });
-        setBookings(list);
-      }
+    const unsubBookings = onSnapshot(collection(db, 'bookings'), (snapshot) => {
+      setBookings(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as Booking)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'bookings');
     });
 
     // 5. Products
-    const unsubProducts = onSnapshot(collection(db, 'products'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial products...');
-        for (const p of INITIAL_PRODUCTS) {
-          try {
-            await setDoc(doc(db, 'products', p.id), p);
-          } catch (err) {
-            console.error('Error seeding product:', p.id, err);
-          }
-        }
-      } else {
-        const list: Product[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as Product);
-        });
-        setProducts(list);
-      }
+    const unsubProducts = onSnapshot(collection(db, 'products'), (snapshot) => {
+      setProducts(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as Product)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'products');
     });
 
     // 6. Packages
-    const unsubPackages = onSnapshot(collection(db, 'packages'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial packages...');
-        for (const pkg of INITIAL_PACKAGES) {
-          try {
-            await setDoc(doc(db, 'packages', pkg.id), pkg);
-          } catch (err) {
-            console.error('Error seeding package:', pkg.id, err);
-          }
-        }
-      } else {
-        const list: ServicePackage[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as ServicePackage);
-        });
-        setPackages(list);
-      }
+    const unsubPackages = onSnapshot(collection(db, 'packages'), (snapshot) => {
+      setPackages(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as ServicePackage)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'packages');
     });
 
     // 7. Combos
-    const unsubCombos = onSnapshot(collection(db, 'combos'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial combos...');
-        for (const comb of INITIAL_COMBOS) {
-          try {
-            await setDoc(doc(db, 'combos', comb.id), comb);
-          } catch (err) {
-            console.error('Error seeding combo:', comb.id, err);
-          }
-        }
-      } else {
-        const list: ServiceCombo[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as ServiceCombo);
-        });
-        setCombos(list);
-      }
+    const unsubCombos = onSnapshot(collection(db, 'combos'), (snapshot) => {
+      setCombos(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as ServiceCombo)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'combos');
     });
 
     // 8. Categories
-    const unsubCategories = onSnapshot(collection(db, 'categories'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial categories...');
-        const initialCats: ServiceCategory[] = [
-          { id: 'cat-1', name: 'Manicure e Pedicure', professionals: ['prof-1', 'prof-3'] },
-          { id: 'cat-2', name: 'Alongamento de Unhas', professionals: ['prof-1'] },
-          { id: 'cat-3', name: 'Banho de Gel', professionals: ['prof-1'] },
-          { id: 'cat-4', name: 'Cílios', professionals: ['prof-2'] },
-          { id: 'cat-5', name: 'Sobrancelhas', professionals: ['prof-2', 'prof-3'] },
-          { id: 'cat-6', name: 'Cabeleireiro', professionals: ['prof-3'] },
-          { id: 'cat-7', name: 'Depilação', professionals: ['prof-2'] },
-          { id: 'cat-8', name: 'Estética Facial', professionals: ['prof-2'] }
-        ];
-        for (const cat of initialCats) {
-          try {
-            await setDoc(doc(db, 'categories', cat.id), cat);
-          } catch (err) {
-            console.error('Error seeding category:', cat.id, err);
-          }
-        }
-      } else {
-        const list: ServiceCategory[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as ServiceCategory);
-        });
-        setCategories(list);
-      }
+    const unsubCategories = onSnapshot(collection(db, 'categories'), (snapshot) => {
+      setCategories(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as ServiceCategory)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'categories');
     });
 
     // 9. Agenda Blocks
-    const unsubAgendaBlocks = onSnapshot(collection(db, 'agenda_blocks'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial agenda blocks...');
-        const initialBlocks = [
-          {
-            id: 'block-1',
-            professionalId: 'prof-2',
-            professionalName: 'Amanda Costa',
-            date: '2026-07-07',
-            time: '12:00',
-            endTime: '13:00',
-            reason: 'Almoço'
-          },
-          {
-            id: 'block-2',
-            professionalId: 'prof-3',
-            professionalName: 'Beatriz Reis',
-            date: '2026-07-07',
-            time: '08:30',
-            endTime: '11:00',
-            reason: 'Não vem de manhã'
-          }
-        ].map(ab => ({ ...ab, date: shiftDate(ab.date) }));
-        for (const ab of initialBlocks) {
-          try {
-            await setDoc(doc(db, 'agenda_blocks', ab.id), ab);
-          } catch (err) {
-            console.error('Error seeding agenda block:', ab.id, err);
-          }
-        }
-      } else {
-        const list: AgendaBlock[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as AgendaBlock);
-        });
-        setAgendaBlocks(list);
-      }
+    const unsubAgendaBlocks = onSnapshot(collection(db, 'agenda_blocks'), (snapshot) => {
+      setAgendaBlocks(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as AgendaBlock)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'agenda_blocks');
     });
 
     // 10. Settings
-    const unsubSettings = onSnapshot(doc(db, 'settings', 'salon'), async (docSnap) => {
-      if (!docSnap.exists()) {
-        console.log('Seeding initial settings...');
-        try {
-          await setDoc(doc(db, 'settings', 'salon'), DEFAULT_SETTINGS);
-        } catch (err) {
-          console.error('Error seeding settings:', err);
-        }
-      } else {
-        setSettings(docSnap.data() as SalonSettings);
-      }
+    const unsubSettings = onSnapshot(doc(db, 'settings', 'salon'), (docSnap) => {
+      setSettings(docSnap.exists() ? docSnap.data() as SalonSettings : DEFAULT_SETTINGS);
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'settings');
     });
 
     // 11. Cashier
-    const unsubCashier = onSnapshot(doc(db, 'cashier', 'current'), async (docSnap) => {
-      if (!docSnap.exists()) {
-        console.log('Seeding initial cashier...');
-        const initialTransactions: CashierTransaction[] = [
-          {
-            id: 'tx-1',
-            type: 'entrada',
-            description: 'Venda de procedimento: Banho de Gel (Mariana Souza)',
-            value: 80.00,
-            category: 'Serviço',
-            date: '2026-07-07 10:15',
-            paymentMethod: 'Pix',
-            isCheckout: true
-          }
-        ];
-        const initialCashierObj = {
-          isOpen: true,
-          openedAt: '2026-07-07 08:00',
-          initialValue: 150.00,
-          transactions: initialTransactions,
-          obs: 'Caixa de abertura padrão'
-        };
-        try {
-          await setDoc(doc(db, 'cashier', 'current'), initialCashierObj);
-        } catch (err) {
-          console.error('Error seeding cashier:', err);
-        }
-      } else {
-        setCashier(docSnap.data() as Cashier);
-      }
+    const unsubCashier = onSnapshot(doc(db, 'cashier', 'current'), (docSnap) => {
+      setCashier(docSnap.exists() ? docSnap.data() as Cashier : {
+        isOpen: false,
+        initialValue: 0,
+        transactions: []
+      });
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'cashier');
     });
 
     // 12. Notifications
-    const unsubNotifications = onSnapshot(collection(db, 'notifications'), async (snapshot) => {
-      if (snapshot.empty) {
-        console.log('Seeding initial notifications...');
-        for (const notif of INITIAL_NOTIFICATIONS) {
-          try {
-            await setDoc(doc(db, 'notifications', notif.id), notif);
-          } catch (err) {
-            console.error('Error seeding notification:', notif.id, err);
-          }
-        }
-      } else {
-        const list: AppNotification[] = [];
-        snapshot.forEach(docSnap => {
-          list.push({ ...docSnap.data() } as AppNotification);
-        });
-        setNotifications(list);
-      }
+    const unsubNotifications = onSnapshot(collection(db, 'notifications'), (snapshot) => {
+      setNotifications(snapshot.docs.map(docSnap => ({
+        ...docSnap.data(),
+        id: docSnap.id
+      } as AppNotification)));
     }, (err) => {
       handleFirestoreError(err, OperationType.GET, 'notifications');
     });
@@ -965,22 +605,42 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   // --- BACKUPS SYSTEM AND ROTATION ---
   const [backupsList, setBackupsList] = useState<BackupMetadata[]>([]);
-  const [backupSettings, setBackupSettings] = useState<{
+  const [backupSettings, setBackupSettingsState] = useState<{
     enabled: boolean;
     frequency: 'daily' | 'weekly' | 'monthly';
     lastBackup: string | null;
-  }>(() => {
-    const saved = localStorage.getItem('belle_backup_settings');
-    return saved ? JSON.parse(saved) : {
-      enabled: true,
-      frequency: 'daily',
-      lastBackup: null
-    };
+  }>({
+    enabled: true,
+    frequency: 'daily',
+    lastBackup: null
   });
 
   useEffect(() => {
-    localStorage.setItem('belle_backup_settings', JSON.stringify(backupSettings));
-  }, [backupSettings]);
+    if (!currentUser) {
+      setBackupSettingsState({ enabled: true, frequency: 'daily', lastBackup: null });
+      return;
+    }
+
+    return onSnapshot(doc(db, 'settings', 'backup'), (snapshot) => {
+      setBackupSettingsState(snapshot.exists() ? snapshot.data() as typeof backupSettings : {
+        enabled: true,
+        frequency: 'daily',
+        lastBackup: null
+      });
+    }, (err) => {
+      handleFirestoreError(err, OperationType.GET, 'settings/backup');
+    });
+  }, [currentUser?.id]);
+
+  const setBackupSettings: React.Dispatch<React.SetStateAction<typeof backupSettings>> = (action) => {
+    const nextSettings = typeof action === 'function'
+      ? action(backupSettings)
+      : action;
+
+    setDoc(doc(db, 'settings', 'backup'), nextSettings, { merge: true }).catch((err) => {
+      handleFirestoreError(err, OperationType.WRITE, 'settings/backup');
+    });
+  };
 
   // FCM / Push Notifications States
   const [fcmTokensList, setFcmTokensList] = useState<FCMToken[]>([]);
@@ -1200,18 +860,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       console.error('Erro ao registrar backup no Firestore:', err);
       status = 'failed';
       errorMessage = err.message || String(err);
-      
-      const localBackups = JSON.parse(localStorage.getItem('belle_local_backups_log') || '[]');
-      localBackups.push({
-        id: backupId,
-        timestamp,
-        size,
-        type,
-        status: 'failed',
-        errorMessage: 'Firestore persist failed: ' + errorMessage,
-        itemCount: backupDoc.itemCount
-      });
-      localStorage.setItem('belle_local_backups_log', JSON.stringify(localBackups));
     }
 
     const metadata: BackupMetadata = {
@@ -1250,18 +898,67 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
       const d = backupData.data;
 
-      if (Array.isArray(d.professionals)) setProfessionals(d.professionals);
-      if (Array.isArray(d.services)) setServices(d.services);
-      if (Array.isArray(d.clients)) setClients(d.clients);
-      if (Array.isArray(d.bookings)) setBookings(d.bookings);
-      if (Array.isArray(d.products)) setProducts(d.products);
-      if (Array.isArray(d.packages)) setPackages(d.packages);
-      if (Array.isArray(d.combos)) setCombos(d.combos);
-      if (Array.isArray(d.categories)) setCategories(d.categories);
-      if (Array.isArray(d.agendaBlocks)) setAgendaBlocks(d.agendaBlocks);
-      if (d.settings && typeof d.settings === 'object') setSettings(d.settings);
-      if (d.cashier && typeof d.cashier === 'object') setCashier(d.cashier);
-      if (Array.isArray(d.notifications)) setNotifications(d.notifications);
+      const replaceCollection = async (collectionName: string, items: Array<{ id: string }>) => {
+        const currentSnapshot = await getDocs(collection(db, collectionName));
+        const incomingIds = new Set(items.map(item => item.id));
+        const operations: Array<
+          | { type: 'delete'; ref: ReturnType<typeof doc> }
+          | { type: 'set'; ref: ReturnType<typeof doc>; data: Record<string, unknown> }
+        > = [];
+
+        currentSnapshot.docs.forEach(currentDoc => {
+          if (!incomingIds.has(currentDoc.id)) {
+            operations.push({ type: 'delete', ref: currentDoc.ref });
+          }
+        });
+
+        items.forEach(item => {
+          operations.push({
+            type: 'set',
+            ref: doc(db, collectionName, item.id),
+            data: item as Record<string, unknown>
+          });
+        });
+
+        for (let index = 0; index < operations.length; index += 400) {
+          const batch = writeBatch(db);
+          operations.slice(index, index + 400).forEach(operation => {
+            if (operation.type === 'delete') {
+              batch.delete(operation.ref);
+            } else {
+              batch.set(operation.ref, operation.data);
+            }
+          });
+          await batch.commit();
+        }
+      };
+
+      const collectionRestores: Array<[string, unknown]> = [
+        ['professionals', d.professionals],
+        ['services', d.services],
+        ['clients', d.clients],
+        ['bookings', d.bookings],
+        ['products', d.products],
+        ['packages', d.packages],
+        ['combos', d.combos],
+        ['categories', d.categories],
+        ['agenda_blocks', d.agendaBlocks],
+        ['notifications', d.notifications],
+        ['booking_schedules', []]
+      ];
+
+      for (const [collectionName, items] of collectionRestores) {
+        if (Array.isArray(items)) {
+          await replaceCollection(collectionName, items);
+        }
+      }
+
+      if (d.settings && typeof d.settings === 'object') {
+        await setDoc(doc(db, 'settings', 'salon'), d.settings);
+      }
+      if (d.cashier && typeof d.cashier === 'object') {
+        await setDoc(doc(db, 'cashier', 'current'), d.cashier);
+      }
 
       if (Array.isArray(d.users)) {
         for (const u of d.users) {
@@ -1407,60 +1104,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Login/Logout Actions
-  const login = async (email: string, passwordOrRole: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<boolean> => {
     try {
-      // 1. Perform Auth sign in using email and password
-      let userCredential;
-      try {
-        userCredential = await signInWithEmailAndPassword(auth, email, passwordOrRole);
-      } catch (signInError: any) {
-        // Smart self-healing fallback for migration
-        let fallbackPassword = '';
-        const lowerEmail = email.toLowerCase();
-        if (passwordOrRole === '123') {
-          if (lowerEmail === 'admin@labelle.com' || lowerEmail === 'fernandoaraujotrafego@gmail.com') fallbackPassword = 'admin123';
-          else if (lowerEmail === 'gestora@labelle.com') fallbackPassword = 'gestora123';
-          else if (lowerEmail === 'recepcao@labelle.com') fallbackPassword = 'recepcao123';
-          else if (lowerEmail === 'profissional@labelle.com') fallbackPassword = 'profissional123';
-        }
-
-        if (fallbackPassword) {
-          try {
-            userCredential = await signInWithEmailAndPassword(auth, email, fallbackPassword);
-            // If logged in with the old fallback password, seamlessly update it to '123'
-            try {
-              const { updatePassword } = await import('firebase/auth');
-              await updatePassword(userCredential.user, '123');
-              console.log('Password successfully migrated to "123" for:', email);
-            } catch (updateErr) {
-              console.error('Error migrating password to "123":', updateErr);
-            }
-          } catch (fallbackError) {
-            // Fallback failed, proceed to on-demand registration or original error
-          }
-        }
-
-        if (!userCredential) {
-          // If login fails because account doesn't exist, try to register them on-the-fly!
-          // This is extremely useful for seed accounts or custom test users.
-          if (signInError.code === 'auth/invalid-credential' || signInError.code === 'auth/user-not-found') {
-            try {
-              userCredential = await createUserWithEmailAndPassword(auth, email, passwordOrRole);
-              console.log('Usuário registrado sob demanda durante o login:', email);
-            } catch (signUpError: any) {
-              // If sign up fails because the email is already in use, it means the password entered was actually incorrect
-              throw signInError;
-            }
-          } else {
-            throw signInError;
-          }
-        }
-      }
+      const userCredential = await signInWithEmailAndPassword(auth, email, password);
 
       const uid = userCredential.user.uid;
 
-      // 2. Ensure profile exists and retrieve it
-      const userData = await ensureUserProfile(uid, email);
+      const userData = await getUserProfile(uid);
 
       if (userData) {
         if (userData.isBlocked) {
@@ -1498,11 +1148,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Users CRUD
-  const addUser = async (user: Omit<User, 'id'>, password?: string): Promise<void> => {
+  const addUser = async (user: Omit<User, 'id'>, password: string): Promise<void> => {
     try {
-      const pwd = password || 'labelle123'; // fallback default password if not provided
+      if (!password) {
+        throw new Error('A senha deve ser informada no cadastro do usuário.');
+      }
       // Create user auth in Firebase (using secondary app so as not to disconnect current admin)
-      const uid = await createNewUserAuth(user.email, pwd);
+      const uid = await createNewUserAuth(user.email, password);
       
       // Save user payload to Firestore 'users' collection
       const userDocRef = doc(db, 'users', uid);
@@ -1548,12 +1200,116 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const scheduleRef = (professionalId: string, date: string) =>
+    doc(db, 'booking_schedules', `${professionalId}_${date}`);
+
+  const isBlockingBookingStatus = (status: BookingStatus) =>
+    status !== 'cancelado' && status !== 'faltou';
+
+  const reservationOverlaps = (
+    reservations: ScheduleReservation[],
+    start: number,
+    end: number,
+    excludeId?: string
+  ) => reservations.some(reservation =>
+    reservation.id !== excludeId && start < reservation.end && end > reservation.start
+  );
+
+  const loadInitialSchedule = async (
+    professionalId: string,
+    date: string
+  ): Promise<ScheduleReservation[]> => {
+    const [bookingSnapshot, blockSnapshot] = await Promise.all([
+      getDocsFromServer(query(collection(db, 'bookings'), where('date', '==', date))),
+      getDocsFromServer(query(collection(db, 'agenda_blocks'), where('date', '==', date)))
+    ]);
+
+    const bookingReservations = bookingSnapshot.docs
+      .map(snapshot => ({ ...snapshot.data(), id: snapshot.id } as Booking))
+      .filter(booking =>
+        booking.professionalId === professionalId && isBlockingBookingStatus(booking.status)
+      )
+      .map(booking => ({
+        id: booking.id,
+        start: timeToMinutes(booking.time),
+        end: timeToMinutes(booking.time) + booking.duration,
+        kind: 'booking' as const
+      }));
+
+    const blockReservations = blockSnapshot.docs
+      .map(snapshot => ({ ...snapshot.data(), id: snapshot.id } as AgendaBlock))
+      .filter(block => block.professionalId === professionalId || block.professionalId === 'all')
+      .map(block => ({
+        id: `block:${block.id}`,
+        start: timeToMinutes(block.time),
+        end: timeToMinutes(block.endTime),
+        kind: 'block' as const
+      }));
+
+    return [...bookingReservations, ...blockReservations];
+  };
+
+  const scheduleReservations = (
+    exists: boolean,
+    data: BookingSchedule | undefined,
+    initialReservations: ScheduleReservation[]
+  ) => exists ? (data?.reservations || []) : initialReservations;
+
+  const bookingConflictResult = () => ({
+    success: false as const,
+    isConflict: true,
+    message: 'Conflito de horário! Este horário acabou de ser reservado em outro dispositivo.'
+  });
+
   // Agenda Blocks CRUD
   const addAgendaBlock = async (block: Omit<AgendaBlock, 'id'>) => {
     try {
       const id = `block-${Date.now()}`;
       const newBlock = { ...block, id };
-      await setDoc(doc(db, 'agenda_blocks', id), newBlock);
+      const professionalIds = block.professionalId === 'all'
+        ? professionals.map(professional => professional.id)
+        : [block.professionalId];
+      const initialSchedules = new Map<string, ScheduleReservation[]>();
+
+      await Promise.all(professionalIds.map(async professionalId => {
+        initialSchedules.set(
+          professionalId,
+          await loadInitialSchedule(professionalId, block.date)
+        );
+      }));
+
+      await runTransaction(db, async transaction => {
+        const refs = professionalIds.map(professionalId => ({
+          professionalId,
+          ref: scheduleRef(professionalId, block.date)
+        }));
+        const snapshots = await Promise.all(refs.map(item => transaction.get(item.ref)));
+
+        refs.forEach((item, index) => {
+          const snapshot = snapshots[index];
+          const reservations = scheduleReservations(
+            snapshot.exists(),
+            snapshot.data() as BookingSchedule | undefined,
+            initialSchedules.get(item.professionalId) || []
+          ).filter(reservation => reservation.id !== `block:${id}`);
+
+          reservations.push({
+            id: `block:${id}`,
+            start: timeToMinutes(block.time),
+            end: timeToMinutes(block.endTime),
+            kind: 'block'
+          });
+
+          transaction.set(item.ref, {
+            professionalId: item.professionalId,
+            date: block.date,
+            reservations,
+            updatedAt: new Date().toISOString()
+          } satisfies BookingSchedule);
+        });
+
+        transaction.set(doc(db, 'agenda_blocks', id), newBlock);
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, `agenda_blocks/${Date.now()}`);
     }
@@ -1561,7 +1317,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const deleteAgendaBlock = async (id: string) => {
     try {
-      await deleteDoc(doc(db, 'agenda_blocks', id));
+      const blockRef = doc(db, 'agenda_blocks', id);
+      const blockSnapshot = await getDoc(blockRef);
+      if (!blockSnapshot.exists()) return;
+
+      const block = { ...blockSnapshot.data(), id } as AgendaBlock;
+      const professionalIds = block.professionalId === 'all'
+        ? professionals.map(professional => professional.id)
+        : [block.professionalId];
+
+      await runTransaction(db, async transaction => {
+        const refs = professionalIds.map(professionalId => ({
+          professionalId,
+          ref: scheduleRef(professionalId, block.date)
+        }));
+        const snapshots = await Promise.all(refs.map(item => transaction.get(item.ref)));
+
+        refs.forEach((item, index) => {
+          const snapshot = snapshots[index];
+          if (!snapshot.exists()) return;
+          const schedule = snapshot.data() as BookingSchedule;
+          transaction.set(item.ref, {
+            ...schedule,
+            reservations: schedule.reservations.filter(
+              reservation => reservation.id !== `block:${id}`
+            ),
+            updatedAt: new Date().toISOString()
+          } satisfies BookingSchedule);
+        });
+
+        transaction.delete(blockRef);
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.DELETE, `agenda_blocks/${id}`);
     }
@@ -1621,12 +1407,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         for (const b of bookingsToUpdate) {
           const updatedVal = srv.price !== undefined ? srv.price : b.value;
           const updatedDur = srv.duration !== undefined ? srv.duration : b.duration;
-          const updatedEndTime = addMinutesToTime(b.time, updatedDur);
-          await updateDoc(doc(db, 'bookings', b.id), {
+          const result = await updateBooking(b.id, {
             value: updatedVal,
-            duration: updatedDur,
-            endTime: updatedEndTime
+            duration: updatedDur
           });
+          if (!result.success) {
+            console.warn(`Agendamento ${b.id} não pôde acompanhar a nova duração: ${result.message}`);
+          }
         }
       }
     } catch (err) {
@@ -1781,7 +1568,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   };
 
   // Bookings CRUD
-  const addBooking = (bk: Omit<Booking, 'id' | 'endTime'>, ignoreConflict: boolean = false) => {
+  const addBooking = async (bk: Omit<Booking, 'id' | 'endTime'>, ignoreConflict: boolean = false) => {
     if (!navigator.onLine) {
       alert("Não é possível registrar novos agendamentos enquanto estiver sem conexão com a internet para evitar conflitos de horário e duplicidade. Por favor, recupere a conexão.");
       return {
@@ -1844,19 +1631,54 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
 
     const calculatedEndTime = addMinutesToTime(bk.time, bk.duration);
-    const id = `bk-${Date.now()}`;
+    const id = `bk-${Date.now()}-${crypto.randomUUID()}`;
     const newBooking: Booking = {
       ...bk,
       id,
       endTime: calculatedEndTime
     };
 
-    setDoc(doc(db, 'bookings', id), newBooking).catch(err => {
+    try {
+      const initialReservations = await loadInitialSchedule(bk.professionalId, bk.date);
+      const bookingRef = doc(db, 'bookings', id);
+      const bookingScheduleRef = scheduleRef(bk.professionalId, bk.date);
+
+      await runTransaction(db, async transaction => {
+        const scheduleSnapshot = await transaction.get(bookingScheduleRef);
+        const reservations = scheduleReservations(
+          scheduleSnapshot.exists(),
+          scheduleSnapshot.data() as BookingSchedule | undefined,
+          initialReservations
+        );
+        const start = timeToMinutes(bk.time);
+        const end = start + bk.duration;
+
+        if (isBlockingBookingStatus(bk.status) && reservationOverlaps(reservations, start, end)) {
+          throw new Error('BOOKING_CONFLICT');
+        }
+
+        const nextReservations = reservations.filter(reservation => reservation.id !== id);
+        if (isBlockingBookingStatus(bk.status)) {
+          nextReservations.push({ id, start, end, kind: 'booking' });
+        }
+
+        transaction.set(bookingRef, newBooking);
+        transaction.set(bookingScheduleRef, {
+          professionalId: bk.professionalId,
+          date: bk.date,
+          reservations: nextReservations,
+          updatedAt: new Date().toISOString()
+        } satisfies BookingSchedule);
+      });
+    } catch (err) {
+      if (err instanceof Error && err.message === 'BOOKING_CONFLICT') {
+        return bookingConflictResult();
+      }
       handleFirestoreError(err, OperationType.CREATE, `bookings/${id}`);
-    });
+    }
 
     // Automatically dispatch Push Notification on scheduling!
-    sendPushNotification(
+    await sendPushNotification(
       'Novo Agendamento Realizado',
       `Agendado: ${newBooking.serviceName} com ${newBooking.professionalName} para ${newBooking.clientName} em ${newBooking.date} às ${newBooking.time}.`,
       newBooking.id,
@@ -1871,7 +1693,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     };
   };
 
-  const updateBooking = (id: string, bk: Partial<Booking>) => {
+  const updateBooking = async (id: string, bk: Partial<Booking>) => {
     if (!navigator.onLine) {
       alert("Não é possível editar agendamentos enquanto estiver sem conexão com a internet. Por favor, recupere a conexão.");
       return {
@@ -1953,10 +1775,97 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     const finalEndTime = addMinutesToTime(merged.time, merged.duration);
     const finalBooking = { ...merged, endTime: finalEndTime };
 
-    setDoc(doc(db, 'bookings', id), finalBooking).catch(err => {
+    try {
+      const oldScheduleKey = `${current.professionalId}_${current.date}`;
+      const newScheduleKey = `${finalBooking.professionalId}_${finalBooking.date}`;
+      const [initialOldReservations, initialNewReservations] = await Promise.all([
+        loadInitialSchedule(current.professionalId, current.date),
+        oldScheduleKey === newScheduleKey
+          ? Promise.resolve([] as ScheduleReservation[])
+          : loadInitialSchedule(finalBooking.professionalId, finalBooking.date)
+      ]);
+      const bookingRef = doc(db, 'bookings', id);
+      const oldScheduleRef = scheduleRef(current.professionalId, current.date);
+      const newScheduleRef = scheduleRef(finalBooking.professionalId, finalBooking.date);
+
+      await runTransaction(db, async transaction => {
+        const bookingSnapshot = await transaction.get(bookingRef);
+        if (!bookingSnapshot.exists()) {
+          throw new Error('BOOKING_NOT_FOUND');
+        }
+
+        const storedBooking = { ...bookingSnapshot.data(), id } as Booking;
+        if (
+          storedBooking.professionalId !== current.professionalId ||
+          storedBooking.date !== current.date
+        ) {
+          throw new Error('BOOKING_CHANGED');
+        }
+
+        const oldScheduleSnapshot = await transaction.get(oldScheduleRef);
+        const newScheduleSnapshot = oldScheduleKey === newScheduleKey
+          ? oldScheduleSnapshot
+          : await transaction.get(newScheduleRef);
+        const oldReservations = scheduleReservations(
+          oldScheduleSnapshot.exists(),
+          oldScheduleSnapshot.data() as BookingSchedule | undefined,
+          initialOldReservations
+        ).filter(reservation => reservation.id !== id);
+        const targetReservations = oldScheduleKey === newScheduleKey
+          ? oldReservations
+          : scheduleReservations(
+              newScheduleSnapshot.exists(),
+              newScheduleSnapshot.data() as BookingSchedule | undefined,
+              initialNewReservations
+            ).filter(reservation => reservation.id !== id);
+        const start = timeToMinutes(finalBooking.time);
+        const end = start + finalBooking.duration;
+
+        if (
+          isBlockingBookingStatus(finalBooking.status) &&
+          reservationOverlaps(targetReservations, start, end, id)
+        ) {
+          throw new Error('BOOKING_CONFLICT');
+        }
+
+        if (isBlockingBookingStatus(finalBooking.status)) {
+          targetReservations.push({ id, start, end, kind: 'booking' });
+        }
+
+        if (oldScheduleKey !== newScheduleKey) {
+          transaction.set(oldScheduleRef, {
+            professionalId: current.professionalId,
+            date: current.date,
+            reservations: oldReservations,
+            updatedAt: new Date().toISOString()
+          } satisfies BookingSchedule);
+        }
+
+        transaction.set(newScheduleRef, {
+          professionalId: finalBooking.professionalId,
+          date: finalBooking.date,
+          reservations: targetReservations,
+          updatedAt: new Date().toISOString()
+        } satisfies BookingSchedule);
+        transaction.set(bookingRef, { ...storedBooking, ...bk, endTime: finalEndTime });
+      });
+
+      return { success: true, message: 'Agendamento atualizado com sucesso!' };
+    } catch (err) {
+      if (err instanceof Error && err.message === 'BOOKING_CONFLICT') {
+        return bookingConflictResult();
+      }
+      if (err instanceof Error && err.message === 'BOOKING_NOT_FOUND') {
+        return { success: false, message: 'Agendamento não encontrado.' };
+      }
+      if (err instanceof Error && err.message === 'BOOKING_CHANGED') {
+        return {
+          success: false,
+          message: 'O agendamento foi alterado em outro dispositivo. Atualize e tente novamente.'
+        };
+      }
       handleFirestoreError(err, OperationType.UPDATE, `bookings/${id}`);
-    });
-    return { success: true, message: 'Agendamento atualizado com sucesso!' };
+    }
   };
 
   const deleteBooking = async (id: string) => {
@@ -1965,8 +1874,50 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return;
     }
     try {
-      await deleteDoc(doc(db, 'bookings', id));
+      const bookingRef = doc(db, 'bookings', id);
+      const serverSnapshot = await getDocFromServer(bookingRef);
+      if (!serverSnapshot.exists()) return;
+
+      const booking = { ...serverSnapshot.data(), id } as Booking;
+      const initialReservations = await loadInitialSchedule(
+        booking.professionalId,
+        booking.date
+      );
+      const bookingScheduleRef = scheduleRef(booking.professionalId, booking.date);
+
+      await runTransaction(db, async transaction => {
+        const [bookingSnapshot, scheduleSnapshot] = await Promise.all([
+          transaction.get(bookingRef),
+          transaction.get(bookingScheduleRef)
+        ]);
+        if (!bookingSnapshot.exists()) return;
+
+        const storedBooking = bookingSnapshot.data() as Booking;
+        if (
+          storedBooking.professionalId !== booking.professionalId ||
+          storedBooking.date !== booking.date
+        ) {
+          throw new Error('BOOKING_CHANGED');
+        }
+
+        const reservations = scheduleReservations(
+          scheduleSnapshot.exists(),
+          scheduleSnapshot.data() as BookingSchedule | undefined,
+          initialReservations
+        ).filter(reservation => reservation.id !== id);
+
+        transaction.set(bookingScheduleRef, {
+          professionalId: booking.professionalId,
+          date: booking.date,
+          reservations,
+          updatedAt: new Date().toISOString()
+        } satisfies BookingSchedule);
+        transaction.delete(bookingRef);
+      });
     } catch (err) {
+      if (err instanceof Error && err.message === 'BOOKING_CHANGED') {
+        throw new Error('O agendamento foi alterado em outro dispositivo. Atualize e tente novamente.');
+      }
       handleFirestoreError(err, OperationType.DELETE, `bookings/${id}`);
     }
   };
@@ -1976,18 +1927,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       alert("Não é possível alterar o status do agendamento enquanto estiver sem conexão com a internet. Por favor, recupere a conexão.");
       return;
     }
-    const found = bookings.find(b => b.id === id);
-    if (found) {
-      sendPushNotification(
-        'Atualização de Agendamento',
-        `O status do agendamento de ${found.clientName} para ${found.serviceName} foi alterado para ${status.toUpperCase()}.`,
-        id,
-        currentUser?.id,
-        currentUser?.email
-      );
-    }
     try {
-      await updateDoc(doc(db, 'bookings', id), { status });
+      const result = await updateBooking(id, { status });
+      if (!result.success) {
+        throw new Error(result.message);
+      }
+
+      const found = bookings.find(b => b.id === id);
+      if (found) {
+        await sendPushNotification(
+          'Atualização de Agendamento',
+          `O status do agendamento de ${found.clientName} para ${found.serviceName} foi alterado para ${status.toUpperCase()}.`,
+          id,
+          currentUser?.id,
+          currentUser?.email
+        );
+      }
     } catch (err) {
       handleFirestoreError(err, OperationType.UPDATE, `bookings/${id}`);
     }
@@ -2010,150 +1965,246 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       alert("Não é possível realizar pagamentos ou finalizar contas operacionais enquanto estiver sem conexão com a internet. Por favor, recupere a conexão.");
       return;
     }
-    const bk = bookings.find(b => b.id === bookingId);
-    if (!bk) return;
+    const localBooking = bookings.find(booking => booking.id === bookingId);
+    if (!localBooking) return;
 
-    // 1. Calculate financial details
-    const servicesSubtotal = bk.value;
-    
-    let productsSubtotal = 0;
-    const soldList: Array<{ id: string; name: string; quantity: number; price: number }> = [];
-
-    // Deduct stock for each retail product sold
-    for (const ps of paymentDetails.productsSold) {
-      const prod = products.find(p => p.id === ps.id);
-      if (prod) {
-        productsSubtotal += ps.price * ps.quantity;
-        soldList.push({
-          id: ps.id,
-          name: prod.name,
-          quantity: ps.quantity,
-          price: ps.price
-        });
-        
-        // Deduct from inventory
-        await adjustStock(
-          ps.id,
-          ps.quantity,
-          'saida',
-          `Venda no caixa - agendamento ${bk.id}`
-        );
-      }
-    }
-
-    const gross = (servicesSubtotal - paymentDetails.discount) + (productsSubtotal - paymentDetails.discountProducts) + paymentDetails.addedValue;
-    
-    let feeValue = 0;
-    if (paymentDetails.methodsSplit && paymentDetails.methodsSplit.length > 0) {
-      paymentDetails.methodsSplit.forEach(m => {
-        const rate = settings.cardFees[m.method] || 0;
-        feeValue += Number(((m.value * rate) / 100).toFixed(2));
+    const productQuantities = new Map<string, { quantity: number; price: number }>();
+    paymentDetails.productsSold.forEach(product => {
+      const current = productQuantities.get(product.id);
+      productQuantities.set(product.id, {
+        quantity: (current?.quantity || 0) + product.quantity,
+        price: product.price
       });
-      feeValue = Number(feeValue.toFixed(2));
-    } else {
-      const rate = settings.cardFees[paymentDetails.method] || 0;
-      feeValue = Number(((gross * rate) / 100).toFixed(2));
-    }
-    
-    const net = Number((gross - feeValue).toFixed(2));
+    });
 
-    // 2. Calculate professional's commission (based on the actual service performed)
-    const srv = services.find(s => s.id === bk.serviceId);
-    const prof = professionals.find(p => p.id === bk.professionalId);
-    const commPct = srv?.commission ?? prof?.commission ?? 40;
-    // Commission calculated over service subtotal after service discount and deducting product cost
-    const serviceFinalValue = Math.max(0, servicesSubtotal - paymentDetails.discount);
-    const productCost = srv?.productCost ?? 0;
-    const serviceValueForCommission = Math.max(0, serviceFinalValue - productCost);
-    const commissionVal = Number(((serviceValueForCommission * commPct) / 100).toFixed(2));
-
-    // 3. Assemble complete paymentDetails object
-    const finalPaymentDetails = {
-      method: paymentDetails.methodsSplit && paymentDetails.methodsSplit.length > 1
-        ? `Múltiplos (${paymentDetails.methodsSplit.map(m => `${m.method}: ${m.value}`).join(', ')})`
-        : paymentDetails.method,
-      gross,
-      discount: paymentDetails.discount,
-      discountProducts: paymentDetails.discountProducts,
-      addedValue: paymentDetails.addedValue,
-      fee: feeValue,
-      net,
-      commission: commissionVal,
-      productsSold: soldList,
-      methodsSplit: paymentDetails.methodsSplit
-    };
+    const isPackagePayment = paymentDetails.method === 'Pacote' ||
+      !!paymentDetails.methodsSplit?.some(method => method.method === 'Pacote');
+    let packageId: string | null = null;
 
     try {
-      // 4. Update the booking object as finalizado, paid and store details in Firestore
-      await updateDoc(doc(db, 'bookings', bookingId), {
-        status: 'finalizado',
-        isPaid: true,
-        paymentDetails: finalPaymentDetails,
-        obs: paymentDetails.obs || bk.obs || ''
-      });
-
-      // 5. Update cashier if open
-      const descStr = `Venda no caixa: ${bk.serviceName} + ${soldList.length} produtos (${bk.clientName})`;
-      if (cashier.isOpen) {
-        if (paymentDetails.methodsSplit && paymentDetails.methodsSplit.length > 0) {
-          for (let mIdx = 0; mIdx < paymentDetails.methodsSplit.length; mIdx++) {
-            const m = paymentDetails.methodsSplit[mIdx];
-            await addCashierTransaction(
-              'entrada',
-              `${descStr} [${mIdx + 1}/${paymentDetails.methodsSplit.length}]`,
-              m.value,
-              'Serviço',
-              m.method,
-              true
-            );
-          }
-        } else {
-          await addCashierTransaction(
-            'entrada',
-            descStr,
-            gross, // store gross cash movement, fee deduction is tracked separately in report calculations
-            'Serviço',
-            paymentDetails.method,
-            true
-          );
-        }
-      }
-
-      // 6. Update Client metrics: lastVisit, and auto-calculate nextMaintenance!
-      const todayStr = new Date().toISOString().split('T')[0];
-      const categoryRules = settings.maintenanceRules;
-      const daysToNext = (srv?.hasMaintenance && srv?.maintenanceDays) 
-        ? srv.maintenanceDays 
-        : (categoryRules[srv?.category || ''] || categoryRules[bk.serviceName] || 0);
-
-      const maintenanceObj = daysToNext > 0 ? {
-        date: addDaysToDate(todayStr, daysToNext),
-        serviceName: bk.serviceName,
-        notified: false
-      } : null;
-
-      await updateClient(bk.clientId, {
-        lastVisit: todayStr,
-        nextMaintenance: maintenanceObj
-      });
-
-      // Consumo automático de pacote se o método for 'Pacote'
-      const isPackagePayment = paymentDetails.method === 'Pacote' || 
-        (paymentDetails.methodsSplit && paymentDetails.methodsSplit.some(m => m.method === 'Pacote'));
-
       if (isPackagePayment) {
-        const matchedPkg = packages.find(p => 
-          p.clientId === bk.clientId && 
-          p.status === 'ativo' && 
-          p.sessionsRemaining > 0 &&
-          (p.servicesIncluded.includes(bk.serviceId) || 
-           p.servicesIncluded.some(nameOrId => nameOrId === bk.serviceName || nameOrId === bk.serviceId) || 
-           (p.items && p.items.some(item => item.serviceName === bk.serviceName && item.sessionsUsed < item.quantity)))
+        const packageSnapshot = await getDocsFromServer(
+          query(collection(db, 'packages'), where('clientId', '==', localBooking.clientId))
         );
-        if (matchedPkg) {
-          await usePackageSession(matchedPkg.id, bk.serviceName, prof?.name || bk.professionalName);
+        const matchedPackage = packageSnapshot.docs
+          .map(snapshot => ({ ...snapshot.data(), id: snapshot.id } as ServicePackage))
+          .find(pkg =>
+            pkg.status === 'ativo' &&
+            pkg.sessionsRemaining > 0 &&
+            (pkg.servicesIncluded.includes(localBooking.serviceId) ||
+             pkg.servicesIncluded.includes(localBooking.serviceName) ||
+             !!pkg.items?.some(item =>
+               item.serviceName === localBooking.serviceName && item.sessionsUsed < item.quantity
+             ))
+          );
+        packageId = matchedPackage?.id || null;
+        if (!packageId) {
+          throw new Error('Nenhum pacote ativo possui sessão disponível para este serviço.');
         }
       }
+
+      const bookingRef = doc(db, 'bookings', bookingId);
+      const cashierRef = doc(db, 'cashier', 'current');
+      const clientRef = doc(db, 'clients', localBooking.clientId);
+      const productRefs = [...productQuantities.keys()].map(id => doc(db, 'products', id));
+      const packageRef = packageId ? doc(db, 'packages', packageId) : null;
+
+      await runTransaction(db, async transaction => {
+        const [bookingSnapshot, cashierSnapshot, clientSnapshot, ...remainingSnapshots] =
+          await Promise.all([
+            transaction.get(bookingRef),
+            transaction.get(cashierRef),
+            transaction.get(clientRef),
+            ...productRefs.map(ref => transaction.get(ref)),
+            ...(packageRef ? [transaction.get(packageRef)] : [])
+          ]);
+
+        if (!bookingSnapshot.exists()) {
+          throw new Error('Agendamento não encontrado.');
+        }
+
+        const booking = { ...bookingSnapshot.data(), id: bookingId } as Booking;
+        if (booking.isPaid) {
+          throw new Error('Este agendamento já foi pago em outro dispositivo.');
+        }
+
+        const productSnapshots = remainingSnapshots.slice(0, productRefs.length);
+        const packageSnapshot = packageRef
+          ? remainingSnapshots[productRefs.length]
+          : null;
+        const soldList: Array<{ id: string; name: string; quantity: number; price: number }> = [];
+        let productsSubtotal = 0;
+
+        productSnapshots.forEach((snapshot, index) => {
+          if (!snapshot.exists()) {
+            throw new Error('Um dos produtos selecionados não existe mais.');
+          }
+
+          const product = { ...snapshot.data(), id: snapshot.id } as Product;
+          const sale = productQuantities.get(product.id)!;
+          if (product.quantity < sale.quantity) {
+            throw new Error(`Estoque insuficiente para ${product.name}.`);
+          }
+
+          productsSubtotal += sale.price * sale.quantity;
+          soldList.push({
+            id: product.id,
+            name: product.name,
+            quantity: sale.quantity,
+            price: sale.price
+          });
+
+          const historyItem = {
+            id: `h-${Date.now()}-${crypto.randomUUID()}`,
+            type: 'saida' as const,
+            quantity: sale.quantity,
+            date: new Date().toISOString().split('T')[0],
+            obs: `Venda no caixa - agendamento ${booking.id}`
+          };
+          transaction.update(productRefs[index], {
+            quantity: product.quantity - sale.quantity,
+            history: [historyItem, ...(product.history || [])]
+          });
+        });
+
+        const servicesSubtotal = booking.value;
+        const gross = (servicesSubtotal - paymentDetails.discount) +
+          (productsSubtotal - paymentDetails.discountProducts) +
+          paymentDetails.addedValue;
+        let feeValue = 0;
+
+        if (paymentDetails.methodsSplit?.length) {
+          paymentDetails.methodsSplit.forEach(method => {
+            const rate = settings.cardFees[method.method] || 0;
+            feeValue += Number(((method.value * rate) / 100).toFixed(2));
+          });
+          feeValue = Number(feeValue.toFixed(2));
+        } else {
+          const rate = settings.cardFees[paymentDetails.method] || 0;
+          feeValue = Number(((gross * rate) / 100).toFixed(2));
+        }
+
+        const service = services.find(item => item.id === booking.serviceId);
+        const professional = professionals.find(item => item.id === booking.professionalId);
+        const commissionRate = service?.commission ?? professional?.commission ?? 40;
+        const commissionBase = Math.max(
+          0,
+          Math.max(0, servicesSubtotal - paymentDetails.discount) - (service?.productCost || 0)
+        );
+        const commission = Number(((commissionBase * commissionRate) / 100).toFixed(2));
+        const finalPaymentDetails = {
+          method: paymentDetails.methodsSplit && paymentDetails.methodsSplit.length > 1
+            ? `Múltiplos (${paymentDetails.methodsSplit.map(method =>
+                `${method.method}: ${method.value}`
+              ).join(', ')})`
+            : paymentDetails.method,
+          gross,
+          discount: paymentDetails.discount,
+          discountProducts: paymentDetails.discountProducts,
+          addedValue: paymentDetails.addedValue,
+          fee: feeValue,
+          net: Number((gross - feeValue).toFixed(2)),
+          commission,
+          productsSold: soldList,
+          methodsSplit: paymentDetails.methodsSplit
+        };
+
+        transaction.update(bookingRef, {
+          status: 'finalizado',
+          isPaid: true,
+          paymentDetails: finalPaymentDetails,
+          obs: paymentDetails.obs || booking.obs || ''
+        });
+
+        if (cashierSnapshot.exists()) {
+          const currentCashier = cashierSnapshot.data() as Cashier;
+          if (currentCashier.isOpen) {
+            const description = `Venda no caixa: ${booking.serviceName} + ${soldList.length} produtos (${booking.clientName})`;
+            const movements: CashierTransaction[] = paymentDetails.methodsSplit?.length
+              ? paymentDetails.methodsSplit.map((method, index) => ({
+                  id: `tx-${Date.now()}-${crypto.randomUUID()}`,
+                  type: 'entrada',
+                  description: `${description} [${index + 1}/${paymentDetails.methodsSplit!.length}]`,
+                  value: method.value,
+                  category: 'Serviço',
+                  date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+                  paymentMethod: method.method,
+                  isCheckout: true
+                }))
+              : [{
+                  id: `tx-${Date.now()}-${crypto.randomUUID()}`,
+                  type: 'entrada',
+                  description,
+                  value: gross,
+                  category: 'Serviço',
+                  date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+                  paymentMethod: paymentDetails.method,
+                  isCheckout: true
+                }];
+
+            transaction.update(cashierRef, {
+              transactions: [...movements, ...(currentCashier.transactions || [])]
+            });
+          }
+        }
+
+        const today = new Date().toISOString().split('T')[0];
+        const maintenanceDays = service?.hasMaintenance && service.maintenanceDays
+          ? service.maintenanceDays
+          : (settings.maintenanceRules[service?.category || ''] ||
+             settings.maintenanceRules[booking.serviceName] || 0);
+        transaction.set(clientRef, {
+          ...(clientSnapshot.exists() ? clientSnapshot.data() : {}),
+          lastVisit: today,
+          nextMaintenance: maintenanceDays > 0 ? {
+            date: addDaysToDate(today, maintenanceDays),
+            serviceName: booking.serviceName,
+            notified: false
+          } : null
+        });
+
+        if (packageRef) {
+          if (!packageSnapshot?.exists()) {
+            throw new Error('O pacote selecionado não existe mais.');
+          }
+
+          const pkg = { ...packageSnapshot.data(), id: packageSnapshot.id } as ServicePackage;
+          if (pkg.status !== 'ativo' || pkg.sessionsRemaining <= 0) {
+            throw new Error('O pacote não possui mais sessões disponíveis.');
+          }
+          const packageMatchesBooking =
+            pkg.clientId === booking.clientId &&
+            (pkg.servicesIncluded.includes(booking.serviceId) ||
+             pkg.servicesIncluded.includes(booking.serviceName) ||
+             !!pkg.items?.some(item =>
+               item.serviceName === booking.serviceName && item.sessionsUsed < item.quantity
+             ));
+          if (!packageMatchesBooking) {
+            throw new Error('O pacote selecionado não corresponde a este atendimento.');
+          }
+
+          let usedItem = false;
+          const updatedItems = pkg.items?.map(item => {
+            if (!usedItem && item.serviceName === booking.serviceName && item.sessionsUsed < item.quantity) {
+              usedItem = true;
+              return { ...item, sessionsUsed: item.sessionsUsed + 1 };
+            }
+            return item;
+          });
+          const remaining = pkg.sessionsRemaining - 1;
+          transaction.update(packageRef, {
+            sessionsUsed: pkg.sessionsUsed + 1,
+            sessionsRemaining: remaining,
+            status: remaining === 0 ? 'concluido' : pkg.status,
+            items: updatedItems,
+            usageHistory: [{
+              date: new Date().toISOString().replace('T', ' ').slice(0, 16),
+              serviceName: booking.serviceName,
+              professionalName: professional?.name || booking.professionalName
+            }, ...(pkg.usageHistory || [])]
+          });
+        }
+      });
     } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `bookings/${bookingId}/checkout`);
     }

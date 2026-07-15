@@ -6,11 +6,11 @@
 import { Professional, Service, Client, Booking, Product, ServicePackage, ServiceCombo, SalonSettings, User, AppNotification } from '../types';
 
 export const MOCK_USERS: User[] = [
-  { id: '1', name: 'Juliana Medeiros (Admin)', email: 'admin@labelle.com', password: '123', role: 'admin' },
-  { id: '2', name: 'Patrícia Rocha (Gestora)', email: 'gestora@labelle.com', password: '123', role: 'gestora' },
-  { id: '3', name: 'Bruna Dias (Recepção)', email: 'recepcao@labelle.com', password: '123', role: 'recepcao' },
-  { id: '4', name: 'Camila Silva (Nails Designer)', email: 'profissional@labelle.com', password: '123', role: 'profissional', professionalId: 'prof-1' },
-  { id: '5', name: 'Amanda Costa (Lash Specialist)', email: 'amanda@labelle.com', password: '123', role: 'profissional', professionalId: 'prof-2' }
+  { id: '1', name: 'Juliana Medeiros (Admin)', email: 'admin@labelle.com', role: 'admin' },
+  { id: '2', name: 'Patrícia Rocha (Gestora)', email: 'gestora@labelle.com', role: 'gestora' },
+  { id: '3', name: 'Bruna Dias (Recepção)', email: 'recepcao@labelle.com', role: 'recepcao' },
+  { id: '4', name: 'Camila Silva (Nails Designer)', email: 'profissional@labelle.com', role: 'profissional', professionalId: 'prof-1' },
+  { id: '5', name: 'Amanda Costa (Lash Specialist)', email: 'amanda@labelle.com', role: 'profissional', professionalId: 'prof-2' }
 ];
 
 export const INITIAL_SERVICES: Service[] = [
