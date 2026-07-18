@@ -624,6 +624,8 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
                     onClick={() => {
                       setTab('configuracoes');
                       setMobileMenuOpen(false);
+                      // Set an anchor in localStorage so Configuracoes can open the right tab
+                      localStorage.setItem('config_active_tab', 'usuarios');
                     }}
                     className={`w-full flex items-center gap-3.5 px-3 py-3 rounded-xl text-[13.5px] font-semibold cursor-pointer min-h-[46px] transition-all text-slate-600 hover:bg-slate-50`}
                   >
@@ -725,7 +727,7 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
               <button
                 key={item.id}
                 onClick={() => {
-                  sessionStorage.setItem('open_new_booking', 'true');
+                  localStorage.setItem('open_new_booking', 'true');
                   setTab('agenda');
                 }}
                 className="relative -top-5 flex flex-col items-center justify-center w-14 h-14 bg-[#D4AF37] hover:bg-[#C5A059] active:scale-90 text-white rounded-full shadow-lg border-4 border-white transition-all cursor-pointer shrink-0 z-50 focus:outline-none"

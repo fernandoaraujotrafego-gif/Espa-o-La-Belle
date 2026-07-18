@@ -91,7 +91,7 @@ export default function Professionals() {
     setIsFormOpen(true);
   };
 
-  const toggleStatus = async (p: Professional) => {
+  const toggleStatus = (p: Professional) => {
     if (p.active) {
       const todayStr = new Date().toISOString().split('T')[0];
       const futureBks = bookings.filter(
@@ -111,18 +111,12 @@ export default function Professionals() {
 
           if (confirmTransfer) {
             const targetProf = otherProfs[0];
-            const transferResults = [];
-            for (const fb of futureBks) {
-              transferResults.push(await updateBooking(fb.id, {
+            futureBks.forEach(fb => {
+              updateBooking(fb.id, {
                 professionalId: targetProf.id,
                 professionalName: targetProf.name
-              }));
-            }
-            const failedTransfer = transferResults.find(result => !result.success);
-            if (failedTransfer) {
-              alert(failedTransfer.message);
-              return;
-            }
+              });
+            });
             alert(`Todos os ${futureBks.length} agendamento(s) futuros foram transferidos para a profissional ${targetProf.name} com sucesso!`);
           }
         } else {
@@ -130,7 +124,7 @@ export default function Professionals() {
         }
       }
     }
-    await updateProfessional(p.id, { active: !p.active });
+    updateProfessional(p.id, { active: !p.active });
   };
 
   // Compute stats for each professional

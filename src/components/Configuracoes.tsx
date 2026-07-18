@@ -448,7 +448,7 @@ export default function Configuracoes() {
   // User form states
   const [uName, setUName] = useState('');
   const [uEmail, setUEmail] = useState('');
-  const [uPassword, setUPassword] = useState('');
+  const [uPassword, setUPassword] = useState('123');
   const [uRole, setURole] = useState<UserRole>('profissional');
   const [uProfId, setUProfId] = useState('');
   const [uIsBlocked, setUIsBlocked] = useState(false);
@@ -525,7 +525,7 @@ export default function Configuracoes() {
     setEditingUserId(null);
     setUName('');
     setUEmail('');
-    setUPassword('');
+    setUPassword('123');
     setURole('profissional');
     setUProfId('');
     setUIsBlocked(false);
@@ -548,7 +548,7 @@ export default function Configuracoes() {
     setEditingUserId(user.id);
     setUName(user.name);
     setUEmail(user.email);
-    setUPassword('');
+    setUPassword(user.password || '123');
     setURole(user.role);
     setUProfId(user.professionalId || '');
     setUIsBlocked(!!user.isBlocked);
@@ -1648,7 +1648,7 @@ export default function Configuracoes() {
                       <label className="font-bold text-slate-600 block">Senha de Acesso *</label>
                       <input
                         type="text"
-                        required={!editingUserId}
+                        required
                         placeholder="Ex: 123"
                         value={uPassword}
                         onChange={(e) => setUPassword(e.target.value)}

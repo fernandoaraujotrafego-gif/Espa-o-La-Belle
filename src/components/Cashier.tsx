@@ -252,13 +252,13 @@ export default function Cashier() {
     setTempObsVal(currentObs || '');
   };
 
-  const handleSaveBookingObs = async (bookingId: string) => {
-    await updateBooking(bookingId, { obs: tempObsVal });
+  const handleSaveBookingObs = (bookingId: string) => {
+    updateBooking(bookingId, { obs: tempObsVal });
     setEditingBookingObsId(null);
     setTempObsVal('');
   };
 
-  const handleAddServiceToAccount = async (e: React.FormEvent) => {
+  const handleAddServiceToAccount = (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId || !newSrvId || !newProfId || !activeAccountClient) return;
 
@@ -268,7 +268,7 @@ export default function Cashier() {
 
     const timeStr = new Date().toTimeString().split(' ')[0].slice(0, 5);
 
-    await addBooking({
+    addBooking({
       clientId: selectedClientId,
       clientName: activeAccountClient.name,
       clientPhone: activeAccountClient.phone,

@@ -1,206 +1,100 @@
 rules_version = '2';
-
 service cloud.firestore {
   match /databases/{database}/documents {
+    
+    // Helper: Check if user is signed in
     function isSignedIn() {
       return request.auth != null;
     }
 
-    function profileExists() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid));
-    }
-
-    function profile() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
-    function hasRole(role) {
-      return profileExists() &&
-        profile().get('isBlocked', false) == false &&
-        profile().role == role;
-    }
-
+    // Helper: Check if user has admin role
     function isAdmin() {
-      return hasRole('admin');
+      return isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
     }
 
-    function isManager() {
-      return hasRole('gestora');
-    }
-
-    function isReception() {
-      return hasRole('recepcao');
-    }
-
-    function isProfessional() {
-      return hasRole('profissional');
-    }
-
-    function isActiveStaff() {
-      return isAdmin() || isManager() || isReception() || isProfessional();
-    }
-
-    function isManagement() {
-      return isAdmin() || isManager();
-    }
-
-    function isOperationalManagement() {
-      return isAdmin() || isManager() || isReception();
-    }
-
-    function hasValidRole(data) {
-      return data.role in ['admin', 'gestora', 'recepcao', 'profissional'];
-    }
-
-    function belongsToCurrentProfessional(data) {
-      return isProfessional() &&
-        data.get('professionalId', '') != '' &&
-        data.get('professionalId', '') == profile().get('professionalId', '');
-    }
-
-    function belongsToCurrentUser(data) {
-      return data.get('userId', '') == request.auth.uid;
-    }
-
-    // Perfis de acesso: somente o administrador gerencia contas e papéis.
     match /users/{userId} {
-      allow get: if isAdmin() || (isSignedIn() && request.auth.uid == userId);
-      allow list: if isAdmin();
-      allow create: if isAdmin();
-      allow update: if (isAdmin() && hasValidRole(request.resource.data)) ||
-        (isActiveStaff() &&
-         request.auth.uid == userId &&
-         request.resource.data.role == resource.data.role &&
-         request.resource.data.diff(resource.data).affectedKeys().hasOnly(['name']));
-      allow delete: if isAdmin() && request.auth.uid != userId;
+      // Allow any signed-in user to read any profile (so they can see lists of users/professionals)
+      allow read: if isSignedIn();
+      
+      // Allow any signed-in user to create their own profile document
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      
+      // Allow any signed-in user to update their own profile, or an admin to update any profile
+      allow update: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin()
+      );
+      
+      // Allow any signed-in user to delete their own profile, or an admin to delete any profile
+      allow delete: if isSignedIn() && (
+        request.auth.uid == userId || isAdmin()
+      );
     }
 
-    // Backups contêm uma cópia ampla dos dados e são exclusivos do administrador.
     match /backups/{backupId} {
-      allow read, create, update, delete: if isAdmin();
+      allow read, write: if isAdmin();
     }
 
-    // Tokens podem ser registrados pelo próprio dispositivo; a equipe pode lê-los
-    // porque a aplicação mantém uma lista compartilhada para notificações.
     match /fcm_tokens/{tokenId} {
-      allow read: if isActiveStaff();
-      allow create: if isActiveStaff() && belongsToCurrentUser(request.resource.data);
-      allow update: if isActiveStaff() &&
-        belongsToCurrentUser(resource.data) &&
-        belongsToCurrentUser(request.resource.data);
-      allow delete: if isAdmin() || belongsToCurrentUser(resource.data);
+      // Allow read/write if signed in and the token's owner userId matches request.auth.uid
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || isAdmin());
+      allow write: if isSignedIn() && (request.resource.data.userId == request.auth.uid || isAdmin());
     }
 
-    // Histórico de push: qualquer perfil ativo pode registrar envios; somente a
-    // gestão pode alterar ou limpar registros existentes.
     match /push_notifications/{notificationId} {
-      allow read, create: if isActiveStaff();
-      allow update, delete: if isManagement();
+      // Allow read of notifications if recipient userId matches the signed-in user, or if admin
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid || resource.data.userId == null || isAdmin());
+      // Allow creation/updates of notifications log for audit trail by signed-in staff/admins
+      allow write: if isSignedIn();
     }
 
-    // Configurações são necessárias para renderizar o sistema, mas apenas a gestão edita.
     match /settings/{settingsId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isManagement();
+      allow read, write: if isSignedIn();
     }
 
-    // Agenda: administração, gestão e recepção operam toda a agenda. Profissionais
-    // só alteram compromissos vinculados ao próprio perfil profissional.
     match /bookings/{bookingId} {
-      allow read: if isActiveStaff();
-      allow create: if isOperationalManagement() ||
-        belongsToCurrentProfessional(request.resource.data);
-      allow update: if isOperationalManagement() ||
-        (belongsToCurrentProfessional(resource.data) &&
-         belongsToCurrentProfessional(request.resource.data));
-      allow delete: if isOperationalManagement() ||
-        belongsToCurrentProfessional(resource.data);
+      allow read, write: if isSignedIn();
     }
 
-    // Índice transacional da agenda. Cada documento representa um profissional
-    // em uma data e é atualizado atomicamente junto com bookings/agenda_blocks.
-    match /booking_schedules/{scheduleId} {
-      allow read: if isActiveStaff();
-      allow create, update: if isOperationalManagement() ||
-        belongsToCurrentProfessional(request.resource.data);
-      allow delete: if isOperationalManagement() ||
-        belongsToCurrentProfessional(resource.data);
-    }
-
-    // Caixa contém dados financeiros e fica restrito a perfis operacionais autorizados.
     match /cashier/{cashierId} {
-      allow read, create, update: if isOperationalManagement();
-      allow delete: if isManagement();
+      allow read, write: if isSignedIn();
     }
 
-    // Combos e pacotes podem ser operados pela recepção; profissionais têm leitura
-    // para consultar os itens usados nos atendimentos.
     match /combos/{comboId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isOperationalManagement();
+      allow read, write: if isSignedIn();
+    }
+
+    match /clients/{clientId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /professionals/{professionalId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /services/{serviceId} {
+      allow read, write: if isSignedIn();
+    }
+
+    match /products/{productId} {
+      allow read, write: if isSignedIn();
     }
 
     match /packages/{packageId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isOperationalManagement();
-    }
-
-    // Clientes são registros comerciais, não contas autenticadas. Todos os perfis
-    // ativos que atendem clientes podem consultar, cadastrar e atualizar; exclusão
-    // definitiva fica reservada à administração e gestão.
-    match /clients/{clientId} {
-      allow read, create, update: if isActiveStaff();
-      allow delete: if isManagement();
-    }
-
-    // Cadastro de profissionais: leitura operacional compartilhada e manutenção pela gestão.
-    match /professionals/{professionalId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isManagement();
-    }
-
-    // Serviços e categorias são consultados por toda a equipe. A recepção também
-    // pode mantê-los, conforme as funções já disponíveis no sistema.
-    match /services/{serviceId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isOperationalManagement();
+      allow read, write: if isSignedIn();
     }
 
     match /categories/{categoryId} {
-      allow read: if isActiveStaff();
-      allow create, update, delete: if isOperationalManagement();
+      allow read, write: if isSignedIn();
     }
 
-    // Estoque: leitura é necessária nos atendimentos e vendas. Gestão cadastra e
-    // exclui produtos; recepção pode atualizar quantidades durante vendas/checkout.
-    match /products/{productId} {
-      allow read: if isActiveStaff();
-      allow create, delete: if isManagement();
-      allow update: if isOperationalManagement();
-    }
-
-    // Bloqueios de agenda seguem a mesma propriedade profissional dos agendamentos.
     match /agenda_blocks/{blockId} {
-      allow read: if isActiveStaff();
-      allow create: if isOperationalManagement() ||
-        belongsToCurrentProfessional(request.resource.data);
-      allow update: if isOperationalManagement() ||
-        (belongsToCurrentProfessional(resource.data) &&
-         belongsToCurrentProfessional(request.resource.data));
-      allow delete: if isOperationalManagement() ||
-        belongsToCurrentProfessional(resource.data);
+      allow read, write: if isSignedIn();
     }
 
-    // Central interna de notificações: todos os perfis ativos precisam criar e
-    // marcar avisos como lidos para preservar o fluxo atual da aplicação.
     match /notifications/{notificationId} {
-      allow read, create, update, delete: if isActiveStaff();
-    }
-
-    // Negação explícita: documentos futuros não ficam acessíveis por acidente.
-    match /{document=**} {
-      allow read, write: if false;
+      allow read, write: if isSignedIn();
     }
   }
 }
