@@ -34,8 +34,11 @@ export default function Clients() {
     addClient,
     updateClient,
     deleteClient,
-    packages
+    packages,
+    currentUser
   } = useApp();
+
+  const canManageClients = currentUser?.role !== 'profissional';
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -66,8 +69,9 @@ export default function Clients() {
     );
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!canManageClients) return;
     if (!formName || !formPhone) return;
 
     // Formato do celular / telefone
@@ -107,27 +111,32 @@ export default function Clients() {
       }
     }
 
-    if (editingClientId) {
-      updateClient(editingClientId, {
-        name: formName,
-        phone: formPhone,
-        birthDate: formBirth,
-        email: formEmail,
-        address: formAddress,
-        obs: formObs,
-        allergies: formAllergies
-      });
-    } else {
-      addClient({
-        name: formName,
-        phone: formPhone,
-        birthDate: formBirth || '1990-01-01',
-        email: formEmail,
-        address: formAddress,
-        obs: formObs,
-        allergies: formAllergies,
-        status: 'ativo'
-      });
+    try {
+      if (editingClientId) {
+        await updateClient(editingClientId, {
+          name: formName,
+          phone: formPhone,
+          birthDate: formBirth,
+          email: formEmail,
+          address: formAddress,
+          obs: formObs,
+          allergies: formAllergies
+        });
+      } else {
+        await addClient({
+          name: formName,
+          phone: formPhone,
+          birthDate: formBirth || '1990-01-01',
+          email: formEmail,
+          address: formAddress,
+          obs: formObs,
+          allergies: formAllergies,
+          status: 'ativo'
+        });
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível salvar a cliente.');
+      return;
     }
 
     setIsFormOpen(false);
@@ -333,15 +342,17 @@ export default function Clients() {
           />
         </div>
 
-        <button
-          onClick={() => {
-            resetForm();
-            setIsFormOpen(true);
-          }}
-          className="px-4 py-2 bg-sky-950 hover:bg-sky-900 text-amber-100 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer shrink-0"
-        >
-          <Plus className="w-4 h-4 text-amber-400" /> Nova Cliente
-        </button>
+        {canManageClients && (
+          <button
+            onClick={() => {
+              resetForm();
+              setIsFormOpen(true);
+            }}
+            className="px-4 py-2 bg-sky-950 hover:bg-sky-900 text-amber-100 text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer shrink-0"
+          >
+            <Plus className="w-4 h-4 text-amber-400" /> Nova Cliente
+          </button>
+        )}
       </div>
 
       {/* Main Grid: list & details split-pane */}
@@ -364,7 +375,7 @@ export default function Clients() {
                   <th className="py-2.5">Celular</th>
                   <th className="py-2.5 hidden sm:table-cell">Última Visita</th>
                   <th className="py-2.5 hidden sm:table-cell">Alerta Alergias</th>
-                  <th className="py-2.5 text-right">Ações</th>
+                  <th className="py-2.5 text-right">{canManageClients ? 'Ações' : 'Detalhes'}</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
@@ -400,27 +411,36 @@ export default function Clients() {
                         )}
                       </td>
                       <td className="py-3 text-right" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
+                        {canManageClients ? (
+                          <div className="flex items-center justify-end gap-1.5">
+                            <button
+                              onClick={() => handleEdit(c)}
+                              className="p-1 hover:bg-slate-100 rounded text-sky-800"
+                              title="Editar Dados"
+                            >
+                              <Edit2 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => {
+                                if (confirm(`Deseja inativar o cadastro da cliente ${c.name}?`)) {
+                                  deleteClient(c.id);
+                                  if (selectedClient?.id === c.id) setSelectedClient(null);
+                                }
+                              }}
+                              className="p-1 hover:bg-rose-50 rounded text-rose-600"
+                              title="Inativar Cliente"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ) : (
                           <button
-                            onClick={() => handleEdit(c)}
-                            className="p-1 hover:bg-slate-100 rounded text-sky-800"
-                            title="Editar Dados"
+                            onClick={() => setSelectedClient(c)}
+                            className="text-[10px] font-bold text-sky-800 hover:underline"
                           >
-                            <Edit2 className="w-3.5 h-3.5" />
+                            Visualizar
                           </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Deseja inativar o cadastro da cliente ${c.name}?`)) {
-                                deleteClient(c.id);
-                                if (selectedClient?.id === c.id) setSelectedClient(null);
-                              }
-                            }}
-                            className="p-1 hover:bg-rose-50 rounded text-rose-600"
-                            title="Inativar Cliente"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
+                        )}
                       </td>
                     </tr>
                   );

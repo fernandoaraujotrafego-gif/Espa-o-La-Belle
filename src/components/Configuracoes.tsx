@@ -5,6 +5,7 @@
 
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
+import { getPasswordValidationError } from '../lib/firebase';
 import { User, UserRole, UserPermissions } from '../types';
 import {
   Settings as SettingsIcon,
@@ -448,7 +449,7 @@ export default function Configuracoes() {
   // User form states
   const [uName, setUName] = useState('');
   const [uEmail, setUEmail] = useState('');
-  const [uPassword, setUPassword] = useState('123');
+  const [uPassword, setUPassword] = useState('');
   const [uRole, setURole] = useState<UserRole>('profissional');
   const [uProfId, setUProfId] = useState('');
   const [uIsBlocked, setUIsBlocked] = useState(false);
@@ -525,7 +526,7 @@ export default function Configuracoes() {
     setEditingUserId(null);
     setUName('');
     setUEmail('');
-    setUPassword('123');
+    setUPassword('');
     setURole('profissional');
     setUProfId('');
     setUIsBlocked(false);
@@ -548,7 +549,7 @@ export default function Configuracoes() {
     setEditingUserId(user.id);
     setUName(user.name);
     setUEmail(user.email);
-    setUPassword(user.password || '123');
+    setUPassword('');
     setURole(user.role);
     setUProfId(user.professionalId || '');
     setUIsBlocked(!!user.isBlocked);
@@ -582,6 +583,12 @@ export default function Configuracoes() {
 
   const handleSaveUser = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const passwordError = !editingUserId ? getPasswordValidationError(uPassword) : null;
+    if (passwordError) {
+      alert(passwordError);
+      return;
+    }
 
     const permissions: UserPermissions | undefined = uURoleIsProfessional(uRole) ? {
       calendarAccess: {
@@ -622,13 +629,18 @@ export default function Configuracoes() {
   };
 
   const handleDeleteUser = async (id: string, name: string) => {
-    if (confirm(`Tem certeza que deseja excluir o usuário "${name}"?`)) {
+    if (id === currentUser?.id) {
+      alert('Para sua segurança, você não pode bloquear a própria conta enquanto está conectado.');
+      return;
+    }
+
+    if (confirm(`Tem certeza que deseja bloquear o acesso do usuário "${name}"?`)) {
       try {
         await deleteUser(id);
-        triggerNotification(`Usuário "${name}" removido!`);
+        triggerNotification(`Acesso de "${name}" bloqueado com sucesso.`);
       } catch (err: any) {
         console.error(err);
-        alert(`Erro ao remover usuário: ${err.message || err}`);
+        alert(`Erro ao bloquear usuário: ${err.message || err}`);
       }
     }
   };
@@ -1608,7 +1620,7 @@ export default function Configuracoes() {
                   <div className="flex justify-between items-center border-b border-slate-200 pb-2">
                     <h5 className="text-xs font-bold uppercase tracking-wider text-slate-700 flex items-center gap-1">
                       <Shield className="w-4 h-4 text-slate-500" />
-                      {editingUserId ? 'Editar Credenciais de Usuário' : 'Adicionar Novo Usuário no Sistema'}
+                      {editingUserId ? 'Editar Perfil e Permissões' : 'Adicionar Novo Usuário no Sistema'}
                     </h5>
                     <button
                       type="button"
@@ -1637,24 +1649,34 @@ export default function Configuracoes() {
                       <input
                         type="email"
                         required
+                        disabled={!!editingUserId}
+                        autoComplete="email"
                         placeholder="amanda@belle.com"
                         value={uEmail}
                         onChange={(e) => setUEmail(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none font-mono"
+                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none font-mono disabled:bg-slate-100 disabled:text-slate-400"
                       />
+                      {editingUserId && <p className="text-[10px] text-slate-400">O e-mail de login não pode ser alterado nesta tela.</p>}
                     </div>
 
-                    <div className="space-y-1">
-                      <label className="font-bold text-slate-600 block">Senha de Acesso *</label>
-                      <input
-                        type="text"
-                        required
-                        placeholder="Ex: 123"
-                        value={uPassword}
-                        onChange={(e) => setUPassword(e.target.value)}
-                        className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none"
-                      />
-                    </div>
+                    {!editingUserId && (
+                      <div className="space-y-1">
+                        <label htmlFor="new-user-password" className="font-bold text-slate-600 block">Senha temporária *</label>
+                        <input
+                          id="new-user-password"
+                          name="new-user-password"
+                          type="password"
+                          required
+                          minLength={8}
+                          autoComplete="new-password"
+                          placeholder="Mínimo de 8 caracteres"
+                          value={uPassword}
+                          onChange={(e) => setUPassword(e.target.value)}
+                          className="w-full px-3 py-2 bg-white border border-slate-200 rounded-xl focus:outline-none"
+                        />
+                        <p className="text-[10px] text-slate-400">Use letra maiúscula, minúscula e número. A senha não será exibida ou armazenada no banco.</p>
+                      </div>
+                    )}
 
                     <div className="space-y-1">
                       <label className="font-bold text-slate-600 block">Nível de Acesso (Perfil)</label>
@@ -1854,7 +1876,7 @@ export default function Configuracoes() {
                         <tr>
                           <th className="p-3">Nome / Usuário</th>
                           <th className="p-3">E-mail</th>
-                          <th className="p-3">Senha</th>
+                          <th className="p-3">Autenticação</th>
                           <th className="p-3">Perfil</th>
                           <th className="p-3">Profissional Vinculado</th>
                           <th className="p-3">Acesso / Status</th>
@@ -1908,7 +1930,7 @@ export default function Configuracoes() {
                                 <button
                                   onClick={() => handleDeleteUser(u.id, u.name)}
                                   className="p-1 border border-rose-100 hover:bg-rose-50 rounded-lg text-rose-600 cursor-pointer transition-colors"
-                                  title="Remover Usuário"
+                                  title="Bloquear acesso"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>

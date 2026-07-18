@@ -3,15 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import { Professional, Service, Client, Booking, Product, ServicePackage, ServiceCombo, SalonSettings, User, AppNotification } from '../types';
-
-export const MOCK_USERS: User[] = [
-  { id: '1', name: 'Juliana Medeiros (Admin)', email: 'admin@labelle.com', password: '123', role: 'admin' },
-  { id: '2', name: 'Patrícia Rocha (Gestora)', email: 'gestora@labelle.com', password: '123', role: 'gestora' },
-  { id: '3', name: 'Bruna Dias (Recepção)', email: 'recepcao@labelle.com', password: '123', role: 'recepcao' },
-  { id: '4', name: 'Camila Silva (Nails Designer)', email: 'profissional@labelle.com', password: '123', role: 'profissional', professionalId: 'prof-1' },
-  { id: '5', name: 'Amanda Costa (Lash Specialist)', email: 'amanda@labelle.com', password: '123', role: 'profissional', professionalId: 'prof-2' }
-];
+import { Professional, Service, Client, Booking, Product, ServicePackage, ServiceCombo, SalonSettings, AppNotification } from '../types';
 
 export const INITIAL_SERVICES: Service[] = [
   { id: 'srv-1', name: 'Manicure Simples', category: 'Manicure e Pedicure', price: 35.00, duration: 30, professionals: ['prof-1', 'prof-3'], commission: 40, active: true, description: 'Corte, lixamento, cuticulagem e esmaltação comum.' },

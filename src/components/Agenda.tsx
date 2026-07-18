@@ -446,15 +446,16 @@ export default function Agenda() {
   
   // Bottom navigation booking trigger effect
   useEffect(() => {
-    const shouldOpen = localStorage.getItem('open_new_booking');
+    const shouldOpen = sessionStorage.getItem('open_new_booking');
     if (shouldOpen === 'true') {
-      localStorage.removeItem('open_new_booking');
+      sessionStorage.removeItem('open_new_booking');
       setIsNewBookingOpen(true);
     }
   }, [isNewBookingOpen]);
 
   const [selectedBooking, setSelectedBooking] = useState<Booking | null>(null);
   const [isCheckoutOpen, setIsCheckoutOpen] = useState(false);
+  const [isCheckoutSubmitting, setIsCheckoutSubmitting] = useState(false);
 
   // New Booking State
   const [newClientId, setNewClientId] = useState('');
@@ -798,7 +799,7 @@ export default function Agenda() {
     setSelectedDate(d.toISOString().split('T')[0]);
   };
 
-  const handleCreateBlock = (e: React.FormEvent) => {
+  const handleCreateBlock = async (e: React.FormEvent) => {
     e.preventDefault();
     setBlockError('');
 
@@ -809,37 +810,37 @@ export default function Agenda() {
 
     const reasonText = blockReason === 'Outro' ? (blockCustomReason || 'Bloqueio') : blockReason;
 
-    if (blockProfId === 'all') {
-      activeProfessionals.forEach(p => {
-        addAgendaBlock({
-          professionalId: p.id,
-          professionalName: p.name,
-          date: blockDate,
-          time: blockStartTime,
-          endTime: blockEndTime,
-          reason: reasonText
-        });
-      });
-    } else {
-      const selectedProf = activeProfessionals.find(p => p.id === blockProfId);
-      if (!selectedProf) return;
-      addAgendaBlock({
-        professionalId: selectedProf.id,
-        professionalName: selectedProf.name,
+    const selectedProf = activeProfessionals.find(p => p.id === blockProfId);
+    if (blockProfId !== 'all' && !selectedProf) return;
+
+    try {
+      await addAgendaBlock({
+        professionalId: blockProfId,
+        professionalName: blockProfId === 'all' ? 'Todas as profissionais' : selectedProf!.name,
         date: blockDate,
         time: blockStartTime,
         endTime: blockEndTime,
         reason: reasonText
       });
+      setIsBlockModalOpen(false);
+      setBlockCustomReason('');
+      setBlockReason('Outro');
+    } catch (error) {
+      setBlockError(error instanceof Error ? error.message : 'Não foi possível criar o bloqueio.');
     }
+  };
 
-    setIsBlockModalOpen(false);
-    setBlockCustomReason('');
-    setBlockReason('Outro');
+  const handleDeleteBlock = async (id: string) => {
+    if (!window.confirm('Remover este bloqueio da agenda?')) return;
+    try {
+      await deleteAgendaBlock(id);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível remover o bloqueio.');
+    }
   };
 
   // Submit Booking creation
-  const handleCreateBooking = (e?: React.FormEvent, ignoreConflictOverride: boolean = false) => {
+  const handleCreateBooking = async (e?: React.FormEvent) => {
     if (e) {
       e.preventDefault();
     }
@@ -877,7 +878,7 @@ export default function Agenda() {
         setFormError('Por favor, digite o nome e telefone da nova cliente.');
         return;
       }
-      const created = addClient({
+      const created = await addClient({
         name: newClientName,
         phone: newClientPhone,
         birthDate: '1990-01-01',
@@ -897,75 +898,85 @@ export default function Agenda() {
       finalClientPhone = existing.phone;
     }
 
-    // Check conflicts unless overbooking is accepted
-    if (!ignoreConflictOverride) {
-      const conflicts: Array<{
-        serviceName: string;
-        professionalName: string;
-        time: string;
-        endTime: string;
-      }> = [];
+    const conflicts: Array<{
+      serviceName: string;
+      professionalName: string;
+      time: string;
+      endTime: string;
+    }> = [];
 
-      for (const item of newItems) {
-        const isConflict = checkScheduleConflict(
-          selectedDate,
-          item.time,
-          item.duration,
-          item.professionalId
-        );
-        if (isConflict) {
-          const prof = professionals.find(p => p.id === item.professionalId);
-          const srv = services.find(s => s.id === item.serviceId);
-          conflicts.push({
-            serviceName: srv ? srv.name : 'Serviço',
-            professionalName: prof ? prof.name : 'Profissional',
-            time: item.time,
-            endTime: addMinutesToTime(item.time, item.duration)
-          });
-        }
-      }
-
-      if (conflicts.length > 0) {
-        setConflictsList(conflicts);
-        setShowConflictConfirm(true);
-        return;
+    for (const item of newItems) {
+      const isConflict = checkScheduleConflict(
+        selectedDate,
+        item.time,
+        item.duration,
+        item.professionalId
+      );
+      if (isConflict) {
+        const prof = professionals.find(p => p.id === item.professionalId);
+        const srv = services.find(s => s.id === item.serviceId);
+        conflicts.push({
+          serviceName: srv ? srv.name : 'Serviço',
+          professionalName: prof ? prof.name : 'Profissional',
+          time: item.time,
+          endTime: addMinutesToTime(item.time, item.duration)
+        });
       }
     }
 
+    if (conflicts.length > 0) {
+      setConflictsList(conflicts);
+      setShowConflictConfirm(true);
+      return;
+    }
+
     // Process saving all items
-    const successes = [];
-    const errors = [];
+    const successes: Booking[] = [];
+    const errors: string[] = [];
 
     for (const item of newItems) {
       const srv = services.find(s => s.id === item.serviceId)!;
       const prof = professionals.find(p => p.id === item.professionalId)!;
 
-      const res = addBooking({
-        clientId: finalClientId,
-        clientName: finalClientName,
-        clientPhone: finalClientPhone,
-        professionalId: prof.id,
-        professionalName: prof.name,
-        serviceId: srv.id,
-        serviceName: srv.name,
-        date: selectedDate,
-        time: item.time,
-        duration: item.duration,
-        value: item.value,
-        status: 'agendado',
-        isPaid: false,
-        obs: newObs
-      }, true); // pass ignoreConflict: true since we already did pre-check or accepted bypass
+      try {
+        const res = await addBooking({
+          clientId: finalClientId,
+          clientName: finalClientName,
+          clientPhone: finalClientPhone,
+          professionalId: prof.id,
+          professionalName: prof.name,
+          serviceId: srv.id,
+          serviceName: srv.name,
+          date: selectedDate,
+          time: item.time,
+          duration: item.duration,
+          value: item.value,
+          status: 'agendado',
+          isPaid: false,
+          obs: newObs
+        });
 
-      if (res.success) {
-        successes.push(res.booking);
-      } else {
-        errors.push(`${srv.name} (${item.time}): ${res.message}`);
+        if (res.success && res.booking) {
+          successes.push(res.booking);
+        } else {
+          errors.push(`${srv.name} (${item.time}): ${res.message}`);
+        }
+      } catch (error) {
+        errors.push(`${srv.name} (${item.time}): ${error instanceof Error ? error.message : 'Falha ao salvar.'}`);
       }
     }
 
-    if (errors.length > 0 && successes.length === 0) {
-      setFormError(errors.join(' | '));
+    if (errors.length > 0) {
+      if (successes.length > 0) {
+        setNewItems(currentItems => currentItems.filter(item => !successes.some(booking =>
+          booking.serviceId === item.serviceId &&
+          booking.professionalId === item.professionalId &&
+          booking.time === item.time
+        )));
+        setFormError(`${successes.length} serviço(s) foram salvos. Revise os demais: ${errors.join(' | ')}`);
+      } else {
+        setFormError(errors.join(' | '));
+      }
       return;
     }
 
@@ -980,10 +991,16 @@ export default function Agenda() {
     setConflictsList([]);
   };
 
-  const handleUpdateStatus = (id: string, status: BookingStatus) => {
-    const res = updateBooking(id, { status });
-    if (res.success) {
-      setSelectedBooking(prev => prev ? { ...prev, status } : null);
+  const handleUpdateStatus = async (id: string, status: BookingStatus) => {
+    try {
+      const res = await updateBooking(id, { status });
+      if (res.success) {
+        setSelectedBooking(prev => prev ? { ...prev, status } : null);
+      } else {
+        alert(res.message);
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível atualizar o agendamento.');
     }
   };
 
@@ -1000,8 +1017,8 @@ export default function Agenda() {
   };
 
   // Confirm checkout and complete billing
-  const handleConfirmCheckout = () => {
-    if (!selectedBooking) return;
+  const handleConfirmCheckout = async () => {
+    if (!selectedBooking || isCheckoutSubmitting) return;
     
     // Safety check if cashier is closed
     if (!cashier.isOpen) {
@@ -1018,9 +1035,16 @@ export default function Agenda() {
       obs: checkoutObs
     };
 
-    checkoutBooking(selectedBooking.id, details);
-    setIsCheckoutOpen(false);
-    setSelectedBooking(null);
+    setIsCheckoutSubmitting(true);
+    try {
+      await checkoutBooking(selectedBooking.id, details);
+      setIsCheckoutOpen(false);
+      setSelectedBooking(null);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível finalizar o pagamento.');
+    } finally {
+      setIsCheckoutSubmitting(false);
+    }
   };
 
   const handleAddProductToCheckout = (prodId: string) => {
@@ -1509,7 +1533,7 @@ export default function Agenda() {
                                   <div className="pl-1.5 pt-1.5 border-t border-rose-100 flex items-center justify-between">
                                     <span className="text-[8px] text-rose-400 font-mono">ID: {block.id.slice(0, 8)}</span>
                                     <button
-                                      onClick={() => deleteAgendaBlock(block.id)}
+                                      onClick={() => void handleDeleteBlock(block.id)}
                                       className="text-[9px] font-bold text-rose-700 hover:text-rose-900 uppercase hover:underline"
                                     >
                                       Remover Bloqueio
@@ -1854,7 +1878,7 @@ export default function Agenda() {
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
-                                deleteAgendaBlock(block.id);
+                                void handleDeleteBlock(block.id);
                               }}
                               className="text-[9px] font-bold text-rose-700 hover:text-rose-900 mt-2 text-right uppercase hover:underline cursor-pointer"
                             >
@@ -2649,14 +2673,14 @@ export default function Agenda() {
             <button
               type="button"
               onClick={handleConfirmCheckout}
-              disabled={!cashier.isOpen}
+              disabled={!cashier.isOpen || isCheckoutSubmitting}
               className={`px-5 py-2 text-xs font-bold rounded-xl transition-all shadow-md cursor-pointer min-h-[38px] flex items-center justify-center flex-1 sm:flex-none sm:w-auto ${
-                cashier.isOpen
+                cashier.isOpen && !isCheckoutSubmitting
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
                   : 'bg-slate-300 text-slate-500 cursor-not-allowed'
               }`}
             >
-              Confirmar e Baixar Caixa
+              {isCheckoutSubmitting ? 'Processando...' : 'Confirmar e Baixar Caixa'}
             </button>
           </div>
 
@@ -2712,7 +2736,7 @@ export default function Agenda() {
               </button>
             </div>
 
-            <form onSubmit={(e) => handleCreateBooking(e, false)} className="flex-1 flex flex-col min-h-0 overflow-hidden">
+            <form onSubmit={handleCreateBooking} className="flex-1 flex flex-col min-h-0 overflow-hidden">
               <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
                 {formError && (
                   <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-3 py-2 rounded-lg font-semibold">
@@ -2976,7 +3000,7 @@ export default function Agenda() {
                 />
               </div>
 
-              {/* CONFLICT OVERBOOK CONFIRMATION DIALOG SECTION */}
+              {/* Schedule conflict warning */}
               {showConflictConfirm && conflictsList.length > 0 && (
                 <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 space-y-3 animate-in fade-in duration-200">
                   <div className="flex items-start gap-2.5">
@@ -2994,12 +3018,12 @@ export default function Agenda() {
                         ))}
                       </ul>
                       <p className="pt-2 italic text-[10px]">
-                        Você deseja confirmar os agendamentos duplicados mesmo assim?
+                        Por segurança, o sistema não permite duplicidade. Ajuste os horários para continuar.
                       </p>
                     </div>
                   </div>
                   
-                  <div className="flex gap-2 justify-end pt-1">
+                  <div className="flex justify-end pt-1">
                     <button
                       type="button"
                       onClick={() => {
@@ -3008,14 +3032,7 @@ export default function Agenda() {
                       }}
                       className="px-3.5 py-1.5 bg-white border border-amber-300 text-amber-900 font-bold text-xs rounded-lg hover:bg-amber-100 transition-all cursor-pointer"
                     >
-                      Não, vou ajustar os horários
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => handleCreateBooking(undefined, true)}
-                      className="px-3.5 py-1.5 bg-amber-600 text-white font-bold text-xs rounded-lg hover:bg-amber-700 transition-all shadow-sm cursor-pointer"
-                    >
-                      Sim, Agendar Mesmo Assim (Forçar)
+                      Ajustar horários
                     </button>
                   </div>
                 </div>

@@ -6,7 +6,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { UserRole } from '../types';
-import { MOCK_USERS } from '../data/mockData';
 import {
   Calendar,
   Users,
@@ -40,9 +39,8 @@ interface LayoutProps {
 }
 
 export default function Layout({ currentTab, setTab, children }: LayoutProps) {
-  const { currentUser, login, logout, cashier, users, settings, isOnline } = useApp();
+  const { currentUser, logout, cashier, settings, isOnline } = useApp();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [showRoleSwitcher, setShowRoleSwitcher] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar_collapsed');
     return saved === 'true';
@@ -202,20 +200,6 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
 
   // Filter menu items by user role
   const allowedMenuItems = menuItems.filter(item => item.roles.includes(currentUser.role));
-
-  const handleRoleChange = (role: UserRole, email: string) => {
-    login(email, role);
-    // Auto-redirect if role is not allowed on current tab
-    const matched = menuItems.find(item => item.id === currentTab);
-    if (matched && !matched.roles.includes(role)) {
-      if (role === 'profissional') {
-        setTab('agenda');
-      } else {
-        setTab(role === 'recepcao' ? 'agenda' : 'dashboard');
-      }
-    }
-    setShowRoleSwitcher(false);
-  };
 
   const getRoleLabel = (role: UserRole) => {
     switch (role) {
@@ -379,43 +363,12 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
               <NotificationCenter setTab={setTab} />
             </div>
 
-            {/* Quick Interactive Role Switcher for instant testing */}
-            <div className="relative">
-              <button
-                onClick={() => setShowRoleSwitcher(!showRoleSwitcher)}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 border border-[#E2E8F0] rounded-lg hover:bg-slate-50 cursor-pointer min-h-[44px]"
-                id="role-switcher-btn"
-              >
-                <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold border ${getRoleColor(currentUser.role)}`}>
-                  {getRoleLabel(currentUser.role)}
-                </span>
-                <span className="text-slate-600 text-[13px]">{currentUser.name.split(' ')[0]}</span>
-              </button>
-
-              {showRoleSwitcher && (
-                <div className="absolute right-0 mt-2 w-56 bg-white border border-[#E2E8F0] shadow-lg rounded-xl p-2 z-40">
-                  <p className="text-[10px] font-mono uppercase tracking-widest text-slate-400 px-2.5 py-1.5 border-b border-[#F1F5F9]">Simular Acesso (Demo)</p>
-                  <div className="flex flex-col gap-1 mt-1.5">
-                    {users.map(u => (
-                      <button
-                        key={u.id}
-                        onClick={() => handleRoleChange(u.role, u.email)}
-                        className={`w-full text-left px-2.5 py-2 text-xs rounded-lg flex items-center justify-between hover:bg-slate-50 transition-colors ${
-                          currentUser.role === u.role ? 'bg-[#F0F4F8] font-medium text-[#2B4C7E]' : 'text-slate-600'
-                        }`}
-                      >
-                        <div className="flex flex-col">
-                          <span>{u.name.split(' (')[0]}</span>
-                          <span className="text-[10px] text-slate-400 font-mono">{u.email}</span>
-                        </div>
-                        <span className="text-[9px] uppercase font-semibold px-1 py-0.5 bg-slate-100 rounded text-slate-500 border border-slate-200">
-                          {u.role}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              )}
+            {/* Authenticated user identity (read-only). */}
+            <div className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 border border-[#E2E8F0] rounded-lg min-h-[44px]">
+              <span className={`px-1.5 py-0.5 rounded text-[10px] uppercase font-bold border ${getRoleColor(currentUser.role)}`}>
+                {getRoleLabel(currentUser.role)}
+              </span>
+              <span className="text-slate-600 text-[13px]">{currentUser.name.split(' ')[0]}</span>
             </div>
 
             <button
@@ -624,8 +577,6 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
                     onClick={() => {
                       setTab('configuracoes');
                       setMobileMenuOpen(false);
-                      // Set an anchor in localStorage so Configuracoes can open the right tab
-                      localStorage.setItem('config_active_tab', 'usuarios');
                     }}
                     className={`w-full flex items-center gap-3.5 px-3 py-3 rounded-xl text-[13.5px] font-semibold cursor-pointer min-h-[46px] transition-all text-slate-600 hover:bg-slate-50`}
                   >
@@ -649,34 +600,12 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
                     </div>
                   </div>
                   
-                  {/* Embedded profile switch in mobile drawer for super easy validation */}
-                  <div className="pt-2 border-t border-slate-200/60 mt-2">
-                    <span className="text-[9px] font-mono uppercase tracking-wider text-slate-400 block mb-1.5">Mudar Usuário (Simulação)</span>
-                    <div className="grid grid-cols-2 gap-1">
-                      {users.slice(0, 4).map(u => (
-                        <button
-                          key={u.id}
-                          onClick={() => {
-                            handleRoleChange(u.role, u.email);
-                            setMobileMenuOpen(false);
-                          }}
-                          className={`px-2 py-1 text-[9px] font-bold rounded-lg border text-left truncate leading-tight transition-colors cursor-pointer ${
-                            currentUser.role === u.role
-                              ? 'bg-[#2B4C7E] text-white border-[#2B4C7E]'
-                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-                          }`}
-                        >
-                          {u.name.split(' ')[0]}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
                 </div>
 
                 {/* LogOut action inside drawer */}
                 <div className="flex items-center justify-between px-1">
                   <div className="flex items-center gap-1.5 text-xs text-slate-400 font-mono">
-                    <span>v2.1.2 • PWA</span>
+                    <span>v2.2.0 • PWA</span>
                   </div>
                   <button
                     onClick={() => {
@@ -727,7 +656,7 @@ export default function Layout({ currentTab, setTab, children }: LayoutProps) {
               <button
                 key={item.id}
                 onClick={() => {
-                  localStorage.setItem('open_new_booking', 'true');
+                  sessionStorage.setItem('open_new_booking', 'true');
                   setTab('agenda');
                 }}
                 className="relative -top-5 flex flex-col items-center justify-center w-14 h-14 bg-[#D4AF37] hover:bg-[#C5A059] active:scale-90 text-white rounded-full shadow-lg border-4 border-white transition-all cursor-pointer shrink-0 z-50 focus:outline-none"

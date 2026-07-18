@@ -2,6 +2,7 @@
   "name": "Espaço La Belle – Gestão de Agenda & Salão",
   "short_name": "La Belle",
   "description": "Sistema de gestão, agenda, clientes, caixa e estoque do Espaço La Belle.",
+  "id": "/",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -9,6 +10,8 @@
   "background_color": "#090d16",
   "theme_color": "#294f82",
   "lang": "pt-BR",
+  "categories": ["business", "productivity"],
+  "prefer_related_applications": false,
   "icons": [
     {
       "src": "/icons/icon-72x72.png",
