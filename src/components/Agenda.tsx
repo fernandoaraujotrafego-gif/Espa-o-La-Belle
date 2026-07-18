@@ -22,8 +22,12 @@ import {
   Lock,
   Unlock,
   Activity,
-  ChevronDown
+  ChevronDown,
+  Search
 } from 'lucide-react';
+
+const normalizeSearchText = (value: string) =>
+  value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
 export default function Agenda() {
   const {
@@ -459,6 +463,7 @@ export default function Agenda() {
 
   // New Booking State
   const [newClientId, setNewClientId] = useState('');
+  const [newClientSearch, setNewClientSearch] = useState('');
   const [newClientName, setNewClientName] = useState('');
   const [newClientPhone, setNewClientPhone] = useState('');
   const [newProfId, setNewProfId] = useState('');
@@ -467,6 +472,12 @@ export default function Agenda() {
   const [newObs, setNewObs] = useState('');
   const [formError, setFormError] = useState('');
   const [isRegisteringNewClient, setIsRegisteringNewClient] = useState(false);
+
+  const filteredNewBookingClients = clients.filter(client => {
+    if (client.status !== 'ativo') return false;
+    if (client.id === newClientId) return true;
+    return normalizeSearchText(client.name).includes(normalizeSearchText(newClientSearch.trim()));
+  });
 
   // Multi-Service Appointment States
   const [newItems, setNewItems] = useState<Array<{
@@ -983,6 +994,7 @@ export default function Agenda() {
     // Success reset and close
     setIsNewBookingOpen(false);
     setNewClientId('');
+    setNewClientSearch('');
     setNewClientName('');
     setNewClientPhone('');
     setNewObs('');
@@ -2778,18 +2790,32 @@ export default function Agenda() {
                     />
                   </div>
                 ) : (
-                  <select
-                    value={newClientId}
-                    onChange={(e) => setNewClientId(e.target.value)}
-                    className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-600 focus:outline-none"
-                  >
-                    <option value="">-- Escolha a cliente --</option>
-                    {clients
-                      .filter(c => c.status === 'ativo')
-                      .map(c => (
-                        <option key={c.id} value={c.id}>{c.name} ({c.phone})</option>
+                  <div className="space-y-2">
+                    <div className="relative">
+                      <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-slate-400 pointer-events-none" />
+                      <input
+                        type="search"
+                        value={newClientSearch}
+                        onChange={(e) => setNewClientSearch(e.target.value)}
+                        placeholder="Pesquisar cliente por nome..."
+                        aria-label="Pesquisar cliente por nome"
+                        className="w-full text-xs bg-white border border-slate-200 rounded-xl pl-9 pr-3 py-2 text-slate-700 placeholder:text-slate-400 focus:outline-none focus:ring-1 focus:ring-[#2B4C7E]"
+                      />
+                    </div>
+                    <select
+                      value={newClientId}
+                      onChange={(e) => setNewClientId(e.target.value)}
+                      className="w-full text-xs bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-slate-600 focus:outline-none"
+                    >
+                      <option value="">-- Escolha a cliente --</option>
+                      {filteredNewBookingClients.map(client => (
+                        <option key={client.id} value={client.id}>{client.name} ({client.phone})</option>
                       ))}
-                  </select>
+                      {filteredNewBookingClients.length === 0 && (
+                        <option value="" disabled>Nenhuma cliente encontrada</option>
+                      )}
+                    </select>
+                  </div>
                 )}
               </div>
 
