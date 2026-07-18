@@ -28,7 +28,8 @@ export default function Professionals() {
     categories,
     addProfessional,
     updateProfessional,
-    updateBooking
+    updateBooking,
+    checkScheduleConflict
   } = useApp();
 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -91,7 +92,7 @@ export default function Professionals() {
     setIsFormOpen(true);
   };
 
-  const toggleStatus = (p: Professional) => {
+  const toggleStatus = async (p: Professional) => {
     if (p.active) {
       const todayStr = new Date().toISOString().split('T')[0];
       const futureBks = bookings.filter(
@@ -103,7 +104,21 @@ export default function Professionals() {
       );
 
       if (futureBks.length > 0) {
-        const otherProfs = professionals.filter(o => o.id !== p.id && o.active);
+        const otherProfs = professionals.filter(candidate =>
+          candidate.id !== p.id &&
+          candidate.active &&
+          futureBks.every(booking => {
+            const service = services.find(item => item.id === booking.serviceId);
+            return !!service?.professionals.includes(candidate.id) &&
+              !checkScheduleConflict(
+                booking.date,
+                booking.time,
+                booking.duration,
+                candidate.id,
+                booking.id
+              );
+          })
+        );
         if (otherProfs.length > 0) {
           const confirmTransfer = window.confirm(
             `Atenção: A profissional ${p.name} possui ${futureBks.length} agendamento(s) futuro(s).\n\nDeseja transferir esses agendamentos para outra profissional ativa? Clique em OK para transferir ou CANCELAR para inativar sem transferir.`
@@ -111,20 +126,33 @@ export default function Professionals() {
 
           if (confirmTransfer) {
             const targetProf = otherProfs[0];
-            futureBks.forEach(fb => {
-              updateBooking(fb.id, {
-                professionalId: targetProf.id,
-                professionalName: targetProf.name
-              });
-            });
-            alert(`Todos os ${futureBks.length} agendamento(s) futuros foram transferidos para a profissional ${targetProf.name} com sucesso!`);
+            try {
+              for (const booking of futureBks) {
+                const result = await updateBooking(booking.id, {
+                  professionalId: targetProf.id,
+                  professionalName: targetProf.name
+                });
+                if (!result.success) throw new Error(result.message);
+              }
+              alert(`Todos os ${futureBks.length} agendamento(s) futuros foram transferidos para a profissional ${targetProf.name} com sucesso!`);
+            } catch (error) {
+              alert(error instanceof Error ? error.message : 'Não foi possível transferir todos os agendamentos.');
+              return;
+            }
+          } else {
+            return;
           }
         } else {
-          alert(`Atenção: A profissional ${p.name} possui ${futureBks.length} agendamento(s) futuro(s), mas não há outra profissional ativa para quem transferir.`);
+          alert(`A profissional ${p.name} possui ${futureBks.length} agendamento(s) futuro(s), mas nenhuma outra profissional compatível está livre nesses horários. Reagende os atendimentos antes de inativá-la.`);
+          return;
         }
       }
     }
-    updateProfessional(p.id, { active: !p.active });
+    try {
+      await updateProfessional(p.id, { active: !p.active });
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível alterar o status da profissional.');
+    }
   };
 
   // Compute stats for each professional

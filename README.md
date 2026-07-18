@@ -1,20 +1,37 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Espaço La Belle — Agenda e Gestão
 
-# Run and deploy your AI Studio app
+Aplicativo interno para agenda, clientes, caixa, estoque, profissionais, serviços, relatórios e configurações do Espaço La Belle.
 
-This contains everything you need to run your app locally.
+## Desenvolvimento local
 
-View your app in AI Studio: https://ai.studio/apps/3c23ae7c-bd7e-4820-bb41-b9270c1eecb0
+Requisitos: Node.js 20 ou superior.
 
-## Run Locally
+```bash
+npm ci
+npm run dev
+```
 
-**Prerequisites:**  Node.js
+Validações antes de publicar:
 
+```bash
+npm run lint
+npm run build
+npm audit --audit-level=high
+```
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## Segurança e acesso
+
+- O login aceita somente contas já existentes no Firebase Authentication.
+- Toda conta também precisa de um perfil criado por um administrador na coleção `users`.
+- Novos usuários exigem senha forte e profissionais devem estar vinculados ao respectivo cadastro profissional.
+- As permissões do banco estão definidas em `firestore.rules` e vinculadas ao banco nomeado em `firebase.json`.
+
+## Publicação
+
+Aplicativo no Google AI Studio: https://ai.studio/apps/3c23ae7c-bd7e-4820-bb41-b9270c1eecb0
+
+As regras do banco nomeado devem ser validadas e publicadas separadamente pelo Firebase CLI:
+
+```bash
+firebase deploy --only firestore:ai-studio-espaolabelleagen-3c23ae7c-bd7e-4820-bb41-b9270c1eecb0 --project gen-lang-client-0067109529
+```

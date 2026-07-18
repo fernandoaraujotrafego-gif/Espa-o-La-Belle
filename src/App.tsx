@@ -7,19 +7,31 @@ import React, { useState } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import Layout from './components/Layout';
 import Login from './components/Login';
-import Dashboard from './components/Dashboard';
-import Agenda from './components/Agenda';
-import Clients from './components/Clients';
-import Cashier from './components/Cashier';
-import PackagesCombos from './components/PackagesCombos';
-import Inventory from './components/Inventory';
-import Professionals from './components/Professionals';
-import Services from './components/Services';
-import Reports from './components/Reports';
-import Configuracoes from './components/Configuracoes';
+
+const Dashboard = React.lazy(() => import('./components/Dashboard'));
+const Agenda = React.lazy(() => import('./components/Agenda'));
+const Clients = React.lazy(() => import('./components/Clients'));
+const Cashier = React.lazy(() => import('./components/Cashier'));
+const PackagesCombos = React.lazy(() => import('./components/PackagesCombos'));
+const Inventory = React.lazy(() => import('./components/Inventory'));
+const Professionals = React.lazy(() => import('./components/Professionals'));
+const Services = React.lazy(() => import('./components/Services'));
+const Reports = React.lazy(() => import('./components/Reports'));
+const Configuracoes = React.lazy(() => import('./components/Configuracoes'));
+
+function ScreenFallback() {
+  return (
+    <div role="status" aria-live="polite" className="min-h-[40vh] flex items-center justify-center">
+      <div className="flex items-center gap-3 text-sm font-semibold text-slate-500">
+        <span className="w-5 h-5 border-2 border-[#D4AF37] border-t-transparent rounded-full animate-spin" aria-hidden="true" />
+        Carregando área do sistema…
+      </div>
+    </div>
+  );
+}
 
 function MainApp() {
-  const { currentUser, authLoading } = useApp();
+  const { currentUser, authLoading, logout } = useApp();
   const [currentTab, setCurrentTab] = useState('dashboard');
 
   // Adjust default tab starting route on authentication changes
@@ -65,10 +77,7 @@ function MainApp() {
             </p>
           </div>
           <button
-            onClick={() => {
-              localStorage.removeItem('belle_current_user');
-              window.location.reload();
-            }}
+            onClick={() => void logout()}
             className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-semibold text-xs rounded-xl cursor-pointer transition-colors"
           >
             Sair ou Trocar Usuário
@@ -107,7 +116,9 @@ function MainApp() {
 
   return (
     <Layout currentTab={currentTab} setTab={setCurrentTab}>
-      {renderContent()}
+      <React.Suspense fallback={<ScreenFallback />}>
+        {renderContent()}
+      </React.Suspense>
     </Layout>
   );
 }

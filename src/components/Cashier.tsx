@@ -84,6 +84,7 @@ export default function Cashier() {
   // Observation editing states
   const [editingBookingObsId, setEditingBookingObsId] = useState<string | null>(null);
   const [tempObsVal, setTempObsVal] = useState('');
+  const [isCheckoutSubmitting, setIsCheckoutSubmitting] = useState(false);
 
   const formatBRL = (val: number) => {
     return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
@@ -252,13 +253,21 @@ export default function Cashier() {
     setTempObsVal(currentObs || '');
   };
 
-  const handleSaveBookingObs = (bookingId: string) => {
-    updateBooking(bookingId, { obs: tempObsVal });
-    setEditingBookingObsId(null);
-    setTempObsVal('');
+  const handleSaveBookingObs = async (bookingId: string) => {
+    try {
+      const result = await updateBooking(bookingId, { obs: tempObsVal });
+      if (result.success) {
+        setEditingBookingObsId(null);
+        setTempObsVal('');
+      } else {
+        alert(result.message);
+      }
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível salvar a observação.');
+    }
   };
 
-  const handleAddServiceToAccount = (e: React.FormEvent) => {
+  const handleAddServiceToAccount = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedClientId || !newSrvId || !newProfId || !activeAccountClient) return;
 
@@ -268,41 +277,56 @@ export default function Cashier() {
 
     const timeStr = new Date().toTimeString().split(' ')[0].slice(0, 5);
 
-    addBooking({
-      clientId: selectedClientId,
-      clientName: activeAccountClient.name,
-      clientPhone: activeAccountClient.phone,
-      serviceId: srv.id,
-      serviceName: srv.name,
-      professionalId: prof.id,
-      professionalName: prof.name,
-      date: cashierDate,
-      time: timeStr,
-      duration: srv.duration,
-      value: newSrvValue,
-      status: 'confirmado',
-      isPaid: false,
-      obs: newSrvObs || undefined
-    }, true); // ignoreConflict = true for cashier add-on
+    try {
+      const result = await addBooking({
+        clientId: selectedClientId,
+        clientName: activeAccountClient.name,
+        clientPhone: activeAccountClient.phone,
+        serviceId: srv.id,
+        serviceName: srv.name,
+        professionalId: prof.id,
+        professionalName: prof.name,
+        date: cashierDate,
+        time: timeStr,
+        duration: srv.duration,
+        value: newSrvValue,
+        status: 'confirmado',
+        isPaid: false,
+        obs: newSrvObs || undefined
+      }, true);
 
-    // Reset sub-form
-    setNewSrvId('');
-    setNewProfId('');
-    setNewSrvValue(0);
-    setNewSrvObs('');
+      if (!result.success) {
+        alert(result.message);
+        return;
+      }
+      setNewSrvId('');
+      setNewProfId('');
+      setNewSrvValue(0);
+      setNewSrvObs('');
+    } catch (error) {
+      alert(error instanceof Error ? error.message : 'Não foi possível adicionar o serviço.');
+    }
   };
 
-  const handleCheckoutAccount = (e: React.FormEvent) => {
+  const handleCheckoutAccount = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedClientId) return;
+    if (!selectedClientId || isCheckoutSubmitting) return;
 
     const pendingBks = activeAccountBookings.filter(b => b.status !== 'finalizado');
     if (pendingBks.length === 0) return;
 
     const totalPendingServices = pendingBks.reduce((sum, b) => sum + b.value, 0);
+    if (checkoutDiscount > totalPendingServices) {
+      alert('O desconto não pode ser maior que o total dos serviços.');
+      return;
+    }
     const totalWithDiscount = Math.max(0, totalPendingServices - checkoutDiscount);
 
-    if (isSplitPayment) {
+    setIsCheckoutSubmitting(true);
+    let remainingDiscount = checkoutDiscount;
+    let completedCount = 0;
+    try {
+      if (isSplitPayment) {
       const splitPaymentsSum = splitPayments.reduce((sum, sp) => sum + sp.value, 0);
       if (Math.abs(splitPaymentsSum - totalWithDiscount) > 0.01) {
         alert(`O valor total das formas de pagamento (${formatBRL(splitPaymentsSum)}) deve ser exatamente igual ao total com desconto (${formatBRL(totalWithDiscount)}).`);
@@ -312,8 +336,10 @@ export default function Cashier() {
       // Distribute each payment method's value proportionally to each booking
       const allocatedByMethod = splitPayments.map(sp => ({ method: sp.method, totalAllocated: 0 }));
 
-      pendingBks.forEach((b, bkIdx) => {
-        const discountToApply = bkIdx === 0 ? checkoutDiscount : 0;
+      for (let bkIdx = 0; bkIdx < pendingBks.length; bkIdx++) {
+        const b = pendingBks[bkIdx];
+        const discountToApply = Math.min(b.value, remainingDiscount);
+        remainingDiscount = Number((remainingDiscount - discountToApply).toFixed(2));
         const bookingGross = b.value - discountToApply;
         const obsToApply = bkIdx === 0 ? checkoutObs : '';
 
@@ -337,7 +363,7 @@ export default function Cashier() {
           });
         }
 
-        checkoutBooking(b.id, {
+        await checkoutBooking(b.id, {
           method: bookingMethodsSplit[0]?.method || 'Pix',
           discount: discountToApply,
           discountProducts: 0,
@@ -346,13 +372,16 @@ export default function Cashier() {
           obs: obsToApply || b.obs,
           methodsSplit: bookingMethodsSplit
         });
-      });
-    } else {
-      pendingBks.forEach((b, index) => {
-        const discountToApply = index === 0 ? checkoutDiscount : 0;
+        completedCount += 1;
+      }
+      } else {
+      for (let index = 0; index < pendingBks.length; index++) {
+        const b = pendingBks[index];
+        const discountToApply = Math.min(b.value, remainingDiscount);
+        remainingDiscount = Number((remainingDiscount - discountToApply).toFixed(2));
         const obsToApply = index === 0 ? checkoutObs : '';
 
-        checkoutBooking(b.id, {
+        await checkoutBooking(b.id, {
           method: checkoutMethod,
           discount: discountToApply,
           discountProducts: 0,
@@ -360,7 +389,21 @@ export default function Cashier() {
           productsSold: [],
           obs: obsToApply || b.obs
         });
-      });
+        completedCount += 1;
+      }
+      }
+    } catch (error) {
+      setCheckoutDiscount(remainingDiscount);
+      if (completedCount > 0) {
+        setIsSplitPayment(false);
+      }
+      const detail = error instanceof Error ? error.message : 'Não foi possível finalizar a conta.';
+      alert(completedCount > 0
+        ? `${completedCount} atendimento(s) foram pagos antes da falha. O desconto restante foi preservado; revise os itens pendentes. ${detail}`
+        : detail);
+      return;
+    } finally {
+      setIsCheckoutSubmitting(false);
     }
 
     // Close and reset
@@ -1240,14 +1283,14 @@ export default function Cashier() {
 
                     <button
                       type="submit"
-                      disabled={isSplitPayment && Math.abs(splitDiff) >= 0.01}
+                      disabled={isCheckoutSubmitting || (isSplitPayment && Math.abs(splitDiff) >= 0.01)}
                       className={`w-full py-2 font-bold rounded-xl transition-all flex items-center justify-center gap-1.5 shadow-md text-xs cursor-pointer ${
-                        isSplitPayment && Math.abs(splitDiff) >= 0.01
+                        isCheckoutSubmitting || (isSplitPayment && Math.abs(splitDiff) >= 0.01)
                           ? 'bg-slate-200 text-slate-400 border border-slate-300 cursor-not-allowed shadow-none'
                           : 'bg-emerald-600 hover:bg-emerald-700 text-white'
                       }`}
                     >
-                      <Check className="w-4 h-4" /> Finalizar & Confirmar Recebimento
+                      <Check className="w-4 h-4" /> {isCheckoutSubmitting ? 'Processando...' : 'Finalizar & Confirmar Recebimento'}
                     </button>
                   </form>
                 )}

@@ -1,4 +1,4 @@
-const CACHE_NAME = 'la-belle-static-v1';
+const CACHE_NAME = 'la-belle-static-v2';
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -23,7 +23,11 @@ self.addEventListener('install', (event) => {
     caches.open(CACHE_NAME).then((cache) => {
       console.log('[Service Worker] Caching essential static resources...');
       return cache.addAll(STATIC_ASSETS);
-    }).then(() => self.skipWaiting())
+    }).then(() => {
+      // Activate immediately only on the first installation. Updates wait for
+      // the user action so an open form is never reloaded without warning.
+      if (!self.registration.active) return self.skipWaiting();
+    })
   );
 });
 
@@ -47,6 +51,9 @@ self.addEventListener('activate', (event) => {
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
+  // External images and fonts keep their native browser cache behavior.
+  if (url.origin !== self.location.origin) return;
+
   // CRITICAL: Skip caching for non-GET, Firebase auth, Firestore, local and cloud APIs, or external dynamic resources
   if (
     event.request.method !== 'GET' ||
@@ -65,10 +72,12 @@ self.addEventListener('fetch', (event) => {
     event.respondWith(
       fetch(event.request)
         .then((response) => {
-          const responseClone = response.clone();
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(event.request, responseClone);
-          });
+          if (response.ok) {
+            const responseClone = response.clone();
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(event.request, responseClone);
+            });
+          }
           return response;
         })
         .catch(() => {
@@ -102,7 +111,7 @@ self.addEventListener('fetch', (event) => {
           return cachedResponse;
         }
         return fetch(event.request).then((response) => {
-          if (response.status === 200) {
+          if (response.ok) {
             const responseClone = response.clone();
             caches.open(CACHE_NAME).then((cache) => {
               cache.put(event.request, responseClone);

@@ -23,7 +23,6 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  password?: string;
   role: UserRole;
   professionalId?: string; // Linked professional if role is 'profissional'
   permissions?: UserPermissions;

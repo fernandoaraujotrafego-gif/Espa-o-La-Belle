@@ -8,7 +8,7 @@ import { useApp } from '../context/AppContext';
 import { Sparkles, Shield, User, Lock, Eye, EyeOff, Loader2, ArrowLeft, AlertTriangle, ExternalLink } from 'lucide-react';
 
 export default function Login() {
-  const { login, forgotPassword, firebaseAuthDisabled } = useApp();
+  const { login, forgotPassword } = useApp();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -41,7 +41,6 @@ export default function Login() {
         await login(email, password);
       }
     } catch (err: any) {
-      console.error(err);
       let friendlyError = 'Ocorreu um erro ao processar sua solicitação.';
       
       if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
@@ -54,6 +53,10 @@ export default function Login() {
         friendlyError = 'O provedor de E-mail/Senha está desativado no Firebase Console para este projeto.';
       } else if (err.message && err.message.includes('Acesso Bloqueado')) {
         friendlyError = err.message;
+      } else if (err.message && err.message.includes('Perfil de usuário não encontrado')) {
+        friendlyError = 'Esta conta não possui acesso autorizado ao sistema. Solicite a liberação ao administrador.';
+      } else if (err.code === 'auth/network-request-failed') {
+        friendlyError = 'Não foi possível conectar ao serviço de acesso. Verifique sua internet e tente novamente.';
       }
       
       setError(friendlyError);
@@ -62,7 +65,7 @@ export default function Login() {
     }
   };
 
-  const hasAuthError = firebaseAuthDisabled || error.includes('Firebase Console');
+  const hasAuthError = error.includes('Firebase Console');
 
   return (
     <div className="min-h-screen w-full bg-[#1E293B] flex items-center justify-center p-4 sm:p-6 md:p-8" style={{
@@ -99,9 +102,9 @@ export default function Login() {
           </div>
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-4" aria-busy={loading}>
             {error && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-3 py-2.5 rounded-lg font-medium leading-relaxed flex flex-col gap-1">
+              <div role="alert" className="bg-rose-50 border border-rose-200 text-rose-800 text-xs px-3 py-2.5 rounded-lg font-medium leading-relaxed flex flex-col gap-1">
                 <span>{error}</span>
                 {errCodeIsAuthDisabled(error) && (
                   <span className="text-[10px] text-rose-600 font-bold uppercase mt-1">Veja as instruções de configuração ao lado</span>
@@ -110,21 +113,26 @@ export default function Login() {
             )}
 
             {success && (
-              <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3 py-2.5 rounded-lg font-medium leading-relaxed">
+              <div role="status" aria-live="polite" className="bg-emerald-50 border border-emerald-200 text-emerald-800 text-xs px-3 py-2.5 rounded-lg font-medium leading-relaxed">
                 {success}
               </div>
             )}
 
             {/* E-mail Field */}
             <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-600 block">E-mail</label>
+              <label htmlFor="login-email" className="text-xs font-semibold text-slate-600 block">E-mail</label>
               <div className="relative">
                 <span className="absolute inset-y-0 left-0 pl-3 flex items-center text-slate-400">
                   <User className="w-4 h-4" />
                 </span>
                 <input
+                  id="login-email"
+                  name="email"
                   type="email"
                   required
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  spellCheck={false}
                   placeholder="usuario@espaolabelle.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -138,7 +146,7 @@ export default function Login() {
             {!isResetMode && (
               <div className="space-y-1">
                 <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-slate-600">Senha</label>
+                  <label htmlFor="login-password" className="text-xs font-semibold text-slate-600">Senha</label>
                   <button
                     type="button"
                     onClick={() => setIsResetMode(true)}
@@ -153,8 +161,11 @@ export default function Login() {
                     <Lock className="w-4 h-4" />
                   </span>
                   <input
+                    id="login-password"
+                    name="password"
                     type={showPassword ? 'text' : 'password'}
                     required
+                    autoComplete="current-password"
                     placeholder="••••••••"
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
@@ -166,6 +177,8 @@ export default function Login() {
                     onClick={() => setShowPassword(!showPassword)}
                     disabled={loading}
                     className="absolute inset-y-0 right-0 pr-3 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer"
+                    aria-label={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
+                    title={showPassword ? 'Ocultar senha' : 'Mostrar senha'}
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
