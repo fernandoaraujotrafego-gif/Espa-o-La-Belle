@@ -10,7 +10,7 @@ import {
   getAuth,
   signOut,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 
 const firebaseConfig = {
   projectId: "gen-lang-client-0067109529",
@@ -26,7 +26,12 @@ const databaseId = "ai-studio-espaolabelleagen-3c23ae7c-bd7e-4820-bb41-b9270c1ee
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
-const db = getFirestore(app, databaseId);
+// Form screens intentionally leave several optional fields empty (for example,
+// the professional linked to an administrator). Firestore does not accept
+// `undefined` values, so omit them at the database boundary instead of
+// rejecting the whole registration. Explicit `null` values continue to be
+// persisted when a field must be cleared.
+const db = initializeFirestore(app, { ignoreUndefinedProperties: true }, databaseId);
 
 export { app, auth, db };
 

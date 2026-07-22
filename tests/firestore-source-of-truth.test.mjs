@@ -31,6 +31,13 @@ test('Firestore snapshots replace state even when collections are empty', async 
   assert.match(context, /setProducts\(mapDocs<Product>\(snapshot\)\)/);
 });
 
+test('Firestore safely omits optional fields left blank by registration forms', async () => {
+  const firebase = await read('src/lib/firebase.ts');
+
+  assert.match(firebase, /initializeFirestore/);
+  assert.match(firebase, /ignoreUndefinedProperties:\s*true/);
+});
+
 test('backup settings and restores are persisted in Firestore', async () => {
   const context = await read('src/context/AppContext.tsx');
 
